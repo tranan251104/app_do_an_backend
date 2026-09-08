@@ -1,0 +1,59 @@
+# Copy this file to application-local.yml only if you want a local profile file.
+# Do NOT commit real API keys/secrets. Prefer environment variables.
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/anpay
+    username: anpay
+    password: anpay_local
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+
+app:
+  auth:
+    firebase:
+      phone-enabled: true
+      project-id: ${FIREBASE_PROJECT_ID:app-do-an-ae40f}
+      max-auth-age-seconds: 600
+    demo-phone-otp:
+      # DEV/DEMO ONLY. Never enable this configuration in production.
+      enabled: true
+      delivery: ${DEMO_PHONE_OTP_DELIVERY:response}
+      auto-register: true
+      ttl-seconds: 180
+      resend-seconds: 60
+      max-attempts: 5
+      max-resends: 3
+
+  otp:
+    ttl-minutes: 5
+    resend-seconds: 60
+    max-attempts: 5
+    max-resends: 3
+
+  mail:
+    from: ${MAIL_FROM:}
+
+  mock-payment:
+    enabled: true
+    checkout-url: http://10.0.2.2:8080/mock-payment.html
+
+  mock-external-transfer:
+    enabled: true
+
+  push:
+    fcm:
+      # Never commit the service-account JSON. Keep it outside the repository.
+      enabled: ${FCM_ENABLED:false}
+      project-id: ${FIREBASE_PROJECT_ID:app-do-an-ae40f}
+      credentials-path: ${FIREBASE_CREDENTIALS_PATH:}

@@ -1,0 +1,8 @@
+/target/
+.env
+application-local.yml
+src/main/resources/application-local.yml
+.idea/
+*.iml
+*.zip
+/src/test/

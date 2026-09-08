@@ -1,0 +1,119 @@
+spring:
+  application:
+    name: anpay-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/anpay}
+    username: ${DB_USERNAME:anpay}
+    password: ${DB_PASSWORD:anpay_local}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: false
+  mail:
+    # Real SMTP delivery. For Gmail use an App Password, never your normal Gmail password.
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    protocol: smtp
+    default-encoding: UTF-8
+    test-connection: false
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
+server:
+  port: 8080
+logging:
+  level:
+    vn.anpay.backend: ${APP_LOG_LEVEL:DEBUG}
+    org.springframework.web: ${WEB_LOG_LEVEL:INFO}
+    org.springframework.security: ${SECURITY_LOG_LEVEL:DEBUG}
+app:
+  auth:
+    firebase:
+      # Firebase Phone Auth ID tokens are verified against this exact project.
+      phone-enabled: ${FIREBASE_PHONE_AUTH_ENABLED:true}
+      project-id: ${FIREBASE_PROJECT_ID:app-do-an-ae40f}
+      # Require a fresh phone OTP sign-in before token exchange or account linking.
+      max-auth-age-seconds: ${FIREBASE_PHONE_MAX_AUTH_AGE_SECONDS:600}
+    demo-phone-otp:
+      # DEV/DEMO ONLY. This does not verify ownership of the entered phone number.
+      # Keep disabled in every production-like environment.
+      enabled: ${DEMO_PHONE_OTP_ENABLED:false}
+      # response: include demoOtp in the response; fcm: push it to the supplied app token.
+      delivery: ${DEMO_PHONE_OTP_DELIVERY:response}
+      auto-register: ${DEMO_PHONE_OTP_AUTO_REGISTER:true}
+      ttl-seconds: ${DEMO_PHONE_OTP_TTL_SECONDS:180}
+      resend-seconds: ${DEMO_PHONE_OTP_RESEND_SECONDS:60}
+      max-attempts: ${DEMO_PHONE_OTP_MAX_ATTEMPTS:5}
+      max-resends: ${DEMO_PHONE_OTP_MAX_RESENDS:3}
+  jwt:
+    secret: ${JWT_SECRET:replace-this-local-secret-with-at-least-32-bytes}
+    access-minutes: 15
+    refresh-days: 30
+  otp:
+    ttl-minutes: 5
+    resend-seconds: 60
+    max-attempts: 5
+    max-resends: 3
+    resend-counter-minutes: 30
+  mail:
+    # Optional. If blank, the SMTP account is used as the sender.
+    from: ${MAIL_FROM:}
+  money:
+    transfer-min: 10000
+    transfer-max: 50000000
+    topup-min: 10000
+    topup-max: 50000000
+  mock-payment:
+    # DEV/LOCAL ONLY. When enabled, a logged-in user can create and confirm virtual top-ups.
+    # Always set MOCK_PAYMENT_ENABLED=false in production.
+    enabled: ${MOCK_PAYMENT_ENABLED:true}
+
+    # Android Emulator can reach the Windows host through 10.0.2.2.
+    # For a physical phone, replace this with your PC LAN IP or a public dev URL.
+    checkout-url: ${MOCK_PAYMENT_CHECKOUT_URL:http://192.168.1.12:8080/mock-payment.html}
+
+  notification:
+    # Notification inbox is visible for 90 days. A scheduled cleanup removes older rows.
+    retention-days: ${NOTIFICATION_RETENTION_DAYS:90}
+    cleanup-cron: ${NOTIFICATION_CLEANUP_CRON:0 15 3 * * *}
+  push:
+    fcm:
+      # Enable only after FIREBASE_CREDENTIALS_PATH points to a Firebase service-account JSON file.
+      enabled: ${FCM_ENABLED:false}
+      project-id: ${FIREBASE_PROJECT_ID:app-do-an-ae40f}
+      credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
+  history:
+    # Transaction history opens with 30 days by default. Each query may span at most 366 days.
+    default-days: ${HISTORY_DEFAULT_DAYS:30}
+    max-range-days: ${HISTORY_MAX_RANGE_DAYS:366}
+  mock-external-transfer:
+    # DEV/DEMO ONLY. The user's ANPAY wallet is debited in PostgreSQL,
+    # but no real bank account receives money.
+    enabled: ${MOCK_EXTERNAL_TRANSFER_ENABLED:true}

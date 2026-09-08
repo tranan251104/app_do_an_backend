@@ -1,0 +1,71 @@
+ANPAY FCM BACKEND SETUP
+=======================
+
+Firebase project
+----------------
+Project ID: app-do-an-ae40f
+Android package: com.company.appdoan
+
+1) Firebase service-account JSON
+-------------------------------
+In Firebase Console open the existing app-do-an-ae40f project, then:
+Project settings -> Service accounts -> Generate new private key.
+
+Keep the downloaded JSON OUTSIDE the source repository. Do not commit it.
+
+2) Backend environment variables
+--------------------------------
+Set these before starting Spring Boot:
+
+FCM_ENABLED=true
+FIREBASE_PROJECT_ID=app-do-an-ae40f
+FIREBASE_CREDENTIALS_PATH=C:\\path\\outside\\repo\\firebase-service-account.json
+
+application.yml defaults FCM_ENABLED to false, so the app still starts safely before credentials are configured.
+
+3) Database
+-----------
+Flyway V5__push_devices.sql creates push_devices automatically on backend startup.
+
+4) Flutter -> backend token registration
+----------------------------------------
+After FirebaseMessaging.instance.getToken() returns a token, call authenticated API:
+
+POST /api/v1/push/devices
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{
+  "token": "<FCM registration token>",
+  "platform": "ANDROID",
+  "deviceId": "<optional stable local device/app id>"
+}
+
+On logout (before discarding the current auth session), call:
+
+POST /api/v1/push/devices/unregister
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{
+  "token": "<FCM registration token>"
+}
+
+5) Delivery flow
+----------------
+A notification row is saved in PostgreSQL in the same transaction as before.
+When FCM is enabled, NotificationPushQueue adds SEND_PUSH_NOTIFICATION to outbox_events.
+OutboxWorker sends the push through FCM HTTP v1 after the transaction commits.
+Invalid/unregistered FCM tokens are automatically disabled.
+
+Push is currently queued for:
+- Internal transfer sender
+- Internal transfer receiver
+- External bank transfer sender
+- Mock top-up success
+- Welcome/wallet-number notification
+
+Important
+---------
+The backend code uses the official FCM HTTP v1 API directly with the JDK HTTP client,
+so this src-only change does NOT require adding firebase-admin to pom.xml.

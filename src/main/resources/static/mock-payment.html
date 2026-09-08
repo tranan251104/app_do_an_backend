@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>ANPAY Secure Checkout</title>
+  <meta name="theme-color" content="#6d3df5" />
+  <style>
+    :root{
+      --primary:#6d3df5;
+      --primary-2:#8b5cf6;
+      --primary-soft:#f2edff;
+      --ink:#171522;
+      --muted:#716d7e;
+      --line:#e9e6f0;
+      --surface:#ffffff;
+      --bg:#f7f5fb;
+      --success:#16a34a;
+      --danger:#dc2626;
+      --warning:#d97706;
+      --shadow:0 18px 60px rgba(51, 31, 104, .10);
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    body{min-height:100vh}
+    button,input{font:inherit}
+    button{cursor:pointer}
+    .app-shell{min-height:100vh;display:flex;flex-direction:column}
+    .topbar{
+      height:72px;background:#fff;border-bottom:1px solid var(--line);
+      display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:20
+    }
+    .brand{display:flex;align-items:center;gap:12px;font-weight:900;letter-spacing:.5px}
+    .brand-mark{
+      width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,var(--primary),#9d72ff);
+      color:#fff;display:grid;place-items:center;font-size:19px;box-shadow:0 8px 18px rgba(109,61,245,.24)
+    }
+    .brand-name{font-size:21px}
+    .secure{display:flex;align-items:center;gap:8px;color:#4b5563;font-size:13px}
+    .secure-dot{width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px #dcfce7}
+
+    .container{width:min(1180px,calc(100% - 32px));margin:30px auto 48px}
+    .progress{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:0;background:#fff;border:1px solid var(--line);
+      border-radius:16px;padding:14px 18px;margin-bottom:22px
+    }
+    .step{display:flex;align-items:center;gap:10px;color:#9a96a3;font-size:13px;font-weight:700}
+    .step:not(:last-child)::after{content:"";height:1px;background:var(--line);flex:1;margin-left:6px}
+    .step span{
+      width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#f1eff5;color:#85808f
+    }
+    .step.active{color:var(--primary)}
+    .step.active span{background:var(--primary);color:#fff}
+    .step.done{color:var(--success)}
+    .step.done span{background:#dcfce7;color:var(--success)}
+
+    .grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,.75fr);gap:22px}
+    .panel{background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow)}
+    .panel-head{padding:22px 24px;border-bottom:1px solid var(--line)}
+    .panel-title{font-size:19px;font-weight:850;margin:0}
+    .panel-sub{font-size:13px;color:var(--muted);margin-top:6px}
+    .panel-body{padding:24px}
+
+    .method-tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}
+    .method-tab{
+      border:1px solid var(--line);background:#fff;border-radius:14px;padding:11px 14px;font-weight:750;color:#514c5b;
+      display:flex;align-items:center;gap:8px
+    }
+    .method-tab.active{border-color:#cfc0ff;background:var(--primary-soft);color:var(--primary)}
+    .method-icon{width:28px;height:28px;border-radius:9px;background:#f3f0f8;display:grid;place-items:center}
+
+    .section-label{font-size:13px;font-weight:800;margin:4px 0 12px}
+    .bank-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .bank{
+      border:1px solid var(--line);background:#fff;border-radius:16px;padding:14px 10px;min-height:92px;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;transition:.18s ease;position:relative
+    }
+    .bank:hover{transform:translateY(-2px);border-color:#d8cbff;box-shadow:0 8px 22px rgba(109,61,245,.08)}
+    .bank.active{border:2px solid var(--primary);background:#faf8ff}
+    .bank.active::after{content:"✓";position:absolute;top:7px;right:8px;width:19px;height:19px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;display:grid;place-items:center}
+    .bank-logo{
+      width:48px;height:32px;border-radius:9px;background:#f6f5f8;display:grid;place-items:center;font-weight:950;
+      font-size:12px;padding:2px;overflow:hidden
+    }
+    .bank-logo img{width:100%;height:100%;object-fit:contain}
+    .bank-name{font-size:12px;font-weight:800;text-align:center}
+    .more{margin-top:12px;width:100%;border:0;background:transparent;color:var(--primary);font-weight:800;padding:10px}
+
+    .payment-preview{
+      margin-top:22px;border:1px solid var(--line);border-radius:18px;padding:18px;background:linear-gradient(180deg,#fff,#fbfaff)
+    }
+    .preview-row{display:flex;justify-content:space-between;gap:14px;padding:8px 0;font-size:14px}
+    .preview-row .k{color:var(--muted)}
+    .preview-row .v{font-weight:800;text-align:right}
+    .preview-row.amount{border-top:1px dashed var(--line);margin-top:8px;padding-top:16px}
+    .preview-row.amount .v{font-size:23px;color:var(--primary)}
+
+    .actions{display:flex;gap:12px;margin-top:20px}
+    .btn{border:0;border-radius:15px;padding:15px 18px;font-weight:850;transition:.18s ease}
+    .btn-primary{background:linear-gradient(135deg,var(--primary),var(--primary-2));color:#fff;flex:1;box-shadow:0 10px 24px rgba(109,61,245,.26)}
+    .btn-primary:hover{transform:translateY(-1px)}
+    .btn-secondary{background:#f3f1f7;color:#4d4757}
+    .btn-danger-soft{background:#fff0f0;color:var(--danger)}
+    .btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
+
+    .summary-card{padding:22px}
+    .merchant{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+    .merchant-logo{width:48px;height:48px;border-radius:15px;background:linear-gradient(135deg,var(--primary),#a084ff);color:#fff;display:grid;place-items:center;font-weight:950}
+    .merchant-name{font-weight:900}
+    .merchant-sub{font-size:12px;color:var(--muted);margin-top:3px}
+    .price-box{padding:18px;border-radius:18px;background:var(--primary-soft);margin:14px 0}
+    .price-label{font-size:12px;color:#6e6690;font-weight:750}
+    .price{font-size:32px;font-weight:950;color:var(--primary);margin-top:4px}
+    .meta{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}
+    .meta-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;font-size:13px}
+    .meta-row span:first-child{color:var(--muted)}
+    .meta-row span:last-child{font-weight:800;text-align:right;word-break:break-all}
+    .notice{margin-top:16px;border-radius:14px;padding:13px 14px;background:#f8fafc;color:#5f6670;font-size:12px;line-height:1.55}
+    .notice strong{color:#374151}
+
+    .status-box{
+      display:none;text-align:center;padding:38px 24px;background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow)
+    }
+    .status-box.show{display:block}
+    .status-icon{width:84px;height:84px;border-radius:50%;margin:0 auto 18px;display:grid;place-items:center;font-size:38px;font-weight:900}
+    .status-icon.success{background:#dcfce7;color:var(--success)}
+    .status-icon.failed{background:#fee2e2;color:var(--danger)}
+    .status-icon.pending{background:#fff7ed;color:var(--warning)}
+    .status-title{font-size:25px;font-weight:950;margin:0 0 8px}
+    .status-desc{color:var(--muted);line-height:1.6;max-width:520px;margin:0 auto}
+    .countdown{margin-top:14px;font-size:13px;color:#6b7280}
+    .status-actions{display:flex;justify-content:center;gap:10px;margin-top:24px;flex-wrap:wrap}
+
+    .overlay{
+      position:fixed;inset:0;background:rgba(18,14,28,.45);backdrop-filter:blur(5px);display:none;place-items:center;z-index:50
+    }
+    .overlay.show{display:grid}
+    .modal{width:min(460px,calc(100% - 32px));background:#fff;border-radius:22px;padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.2)}
+    .modal-title{font-size:18px;font-weight:900}
+    .modal-text{color:var(--muted);font-size:14px;line-height:1.55;margin:10px 0 18px}
+    .modal-actions{display:flex;gap:10px;justify-content:flex-end}
+
+    .loading-layer{
+      position:fixed;inset:0;background:rgba(255,255,255,.76);display:none;place-items:center;z-index:60;backdrop-filter:blur(3px)
+    }
+    .loading-layer.show{display:grid}
+    .spinner{width:52px;height:52px;border:5px solid #ebe7f5;border-top-color:var(--primary);border-radius:50%;animation:spin .85s linear infinite;margin:auto}
+    .loading-text{margin-top:13px;font-weight:800;color:#514b5f}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .dev-badge{
+      position:fixed;bottom:14px;left:14px;background:#111827;color:#fff;font-size:11px;font-weight:800;padding:8px 10px;border-radius:999px;opacity:.82
+    }
+
+    @media(max-width:900px){
+      .grid{grid-template-columns:1fr}
+      .summary{order:-1}
+      .bank-grid{grid-template-columns:repeat(3,1fr)}
+    }
+    @media(max-width:600px){
+      .topbar{padding:0 16px;height:64px}
+      .secure span:last-child{display:none}
+      .container{width:min(100% - 20px,1180px);margin-top:14px}
+      .progress{padding:12px}
+      .step{font-size:0}
+      .step span{font-size:12px}
+      .panel-head,.panel-body{padding:18px}
+      .bank-grid{grid-template-columns:repeat(2,1fr)}
+      .actions{flex-direction:column-reverse}
+      .btn{width:100%}
+      .price{font-size:28px}
+    }
+  </style>
+</head>
+<body>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div class="brand-name">ANPAY</div>
+    </div>
+    <div class="secure"><span class="secure-dot"></span><span>Thanh toán được bảo vệ</span></div>
+  </header>
+
+  <main class="container">
+    <div class="progress">
+      <div class="step done"><span>✓</span>Khởi tạo</div>
+      <div class="step active"><span>2</span>Thanh toán</div>
+      <div class="step"><span>3</span>Hoàn tất</div>
+    </div>
+
+    <div id="checkoutView" class="grid">
+      <section class="panel">
+        <div class="panel-head">
+          <h1 class="panel-title">Chọn phương thức thanh toán</h1>
+          <div class="panel-sub">Đây là cổng thanh toán thử nghiệm của ANPAY. Không nhập thông tin đăng nhập ngân hàng thật.</div>
+        </div>
+        <div class="panel-body">
+          <div class="method-tabs">
+            <button class="method-tab active" data-method="bank"><span class="method-icon">🏦</span>Ngân hàng nội địa</button>
+            <button class="method-tab" data-method="qr"><span class="method-icon">▦</span>QR mô phỏng</button>
+            <button class="method-tab" data-method="wallet"><span class="method-icon">◈</span>Ví điện tử</button>
+          </div>
+
+          <div id="bankSection">
+            <div class="section-label">Chọn ngân hàng</div>
+            <div class="bank-grid" id="bankGrid"></div>
+            <button class="more" id="toggleBanks">Hiển thị thêm ngân hàng</button>
+          </div>
+
+          <div class="payment-preview">
+            <div class="preview-row"><span class="k">Phương thức</span><span class="v" id="chosenMethod">Ngân hàng nội địa</span></div>
+            <div class="preview-row"><span class="k">Ngân hàng</span><span class="v" id="chosenBank">Chưa chọn</span></div>
+            <div class="preview-row"><span class="k">Mã giao dịch</span><span class="v" id="orderCode">Đang tải...</span></div>
+            <div class="preview-row amount"><span class="k">Tổng thanh toán</span><span class="v" id="totalAmount">0 ₫</span></div>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn-danger-soft" id="cancelBtn">Hủy giao dịch</button>
+            <button class="btn btn-primary" id="payBtn" disabled>Xác nhận thanh toán</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel summary">
+        <div class="summary-card">
+          <div class="merchant">
+            <div class="merchant-logo">A</div>
+            <div>
+              <div class="merchant-name">ANPAY Wallet</div>
+              <div class="merchant-sub">Nạp tiền vào ví</div>
+            </div>
+          </div>
+
+          <div class="price-box">
+            <div class="price-label">SỐ TIỀN CẦN THANH TOÁN</div>
+            <div class="price" id="summaryAmount">0 ₫</div>
+          </div>
+
+          <div class="meta">
+            <div class="meta-row"><span>Người nhận</span><span id="recipient">Ví ANPAY</span></div>
+            <div class="meta-row"><span>Mã Payment Intent</span><span id="paymentId">...</span></div>
+            <div class="meta-row"><span>Trạng thái</span><span id="statusText">PENDING</span></div>
+            <div class="meta-row"><span>Hết hạn</span><span id="expiresAt">--:--</span></div>
+          </div>
+
+          <div class="notice">
+            <strong>Môi trường phát triển.</strong> Trang này chỉ mô phỏng cổng thanh toán. Khi bấm xác nhận, yêu cầu vẫn được gửi về Backend và Backend mới là nơi cập nhật giao dịch, ledger và số dư ví.
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <section id="resultView" class="status-box">
+      <div id="statusIcon" class="status-icon success">✓</div>
+      <h2 id="statusTitle" class="status-title">Thanh toán thành công</h2>
+      <p id="statusDesc" class="status-desc"></p>
+      <div id="countdown" class="countdown"></div>
+      <div class="status-actions">
+        <button id="backAppBtn" class="btn btn-primary">Quay lại ANPAY</button>
+        <button id="stayBtn" class="btn btn-secondary">Ở lại trang</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="confirmOverlay" class="overlay">
+  <div class="modal">
+    <div class="modal-title">Xác nhận thanh toán thử nghiệm</div>
+    <div class="modal-text" id="confirmText"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="closeConfirm">Quay lại</button>
+      <button class="btn btn-primary" id="confirmPay">Thanh toán</button>
+    </div>
+  </div>
+</div>
+
+<div id="loadingLayer" class="loading-layer">
+  <div style="text-align:center">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Đang xử lý giao dịch...</div>
+  </div>
+</div>
+
+<div class="dev-badge">ANPAY MOCK PAYMENT • DEV ONLY</div>
+
+<script>
+  // ============================================================
+  // ANPAY MOCK PAYMENT GATEWAY
+  // - Không cập nhật Firebase trực tiếp.
+  // - Số tiền phải lấy từ Backend theo paymentIntentId.
+  // - Backend là nơi duy nhất được phép cộng tiền.
+  // ============================================================
+
+  const params = new URLSearchParams(location.search);
+  const paymentIntentId = params.get("paymentIntentId") || params.get("id");
+  const checkoutToken = params.get("token");
+  const demoMode = params.get("demo") === "1";
+
+  // Trang checkout được Spring Boot phục vụ, vì vậy dùng same-origin để tránh CORS.
+  // Có thể override bằng ?apiBase=... khi cần debug đặc biệt.
+  const API_BASE = params.get("apiBase") || location.origin;
+
+  const state = {
+    paymentIntentId,
+    amount: 0,
+    orderCode: "",
+    recipientName: "Ví ANPAY",
+    status: "PENDING",
+    expiresAt: null,
+    selectedMethod: "bank",
+    selectedBank: null,
+    expandedBanks: false
+  };
+
+  const banks = [
+    {code:"MB", name:"MB Bank", logo:"https://api.vietqr.io/img/MB.png"},
+    {code:"VCB", name:"Vietcombank", logo:"https://api.vietqr.io/img/VCB.png"},
+    {code:"BIDV", name:"BIDV", logo:"https://api.vietqr.io/img/BIDV.png"},
+    {code:"TCB", name:"Techcombank", logo:"https://api.vietqr.io/img/TCB.png"},
+    {code:"ACB", name:"ACB", logo:"https://api.vietqr.io/img/ACB.png"},
+    {code:"VPB", name:"VPBank", logo:"https://api.vietqr.io/img/VPB.png"},
+    {code:"TPB", name:"TPBank", logo:"https://api.vietqr.io/img/TPB.png"},
+    {code:"VIB", name:"VIB", logo:"https://api.vietqr.io/img/VIB.png"},
+    {code:"STB", name:"Sacombank", logo:"https://api.vietqr.io/img/STB.png"},
+    {code:"OCB", name:"OCB", logo:"https://api.vietqr.io/img/OCB.png"},
+    {code:"MSB", name:"MSB", logo:"https://api.vietqr.io/img/MSB.png"},
+    {code:"SHB", name:"SHB", logo:"https://api.vietqr.io/img/SHB.png"}
+  ];
+
+  const $ = (id) => document.getElementById(id);
+
+  function money(v){
+    return new Intl.NumberFormat("vi-VN").format(Number(v || 0)) + " ₫";
+  }
+
+  function maskId(v){
+    if(!v) return "...";
+    return v.length > 18 ? v.slice(0,8) + "..." + v.slice(-6) : v;
+  }
+
+  function renderBanks(){
+    const visible = state.expandedBanks ? banks : banks.slice(0,8);
+    $("bankGrid").innerHTML = visible.map(b => `
+      <button class="bank ${state.selectedBank===b.code ? "active":""}" data-bank="${b.code}">
+        <div class="bank-logo"><img src="${b.logo}" alt="${b.name}" onerror="this.style.display='none';this.parentNode.textContent='${b.code}'"></div>
+        <div class="bank-name">${b.name}</div>
+      </button>
+    `).join("");
+
+    document.querySelectorAll("[data-bank]").forEach(btn=>{
+      btn.onclick = ()=>{
+        state.selectedBank = btn.dataset.bank;
+        updateUI();
+        renderBanks();
+      };
+    });
+    $("toggleBanks").textContent = state.expandedBanks ? "Thu gọn" : "Hiển thị thêm ngân hàng";
+  }
+
+  function updateUI(){
+    $("summaryAmount").textContent = money(state.amount);
+    $("totalAmount").textContent = money(state.amount);
+    $("orderCode").textContent = state.orderCode || "...";
+    $("recipient").textContent = state.recipientName || "Ví ANPAY";
+    $("paymentId").textContent = maskId(state.paymentIntentId);
+    $("statusText").textContent = state.status;
+    $("expiresAt").textContent = state.expiresAt ? new Date(state.expiresAt).toLocaleString("vi-VN") : "--";
+    $("chosenBank").textContent = state.selectedBank ? (banks.find(b=>b.code===state.selectedBank)?.name || state.selectedBank) : "Chưa chọn";
+    $("chosenMethod").textContent =
+      state.selectedMethod === "bank" ? "Ngân hàng nội địa" :
+      state.selectedMethod === "qr" ? "QR mô phỏng" : "Ví điện tử";
+    $("payBtn").disabled = state.status !== "PENDING" || (state.selectedMethod==="bank" && !state.selectedBank);
+  }
+
+  async function loadPayment(){
+    showLoading("Đang tải thông tin thanh toán...");
+    try{
+      if(demoMode){
+        await new Promise(r=>setTimeout(r,500));
+        state.paymentIntentId = state.paymentIntentId || "demo-8fc7a2d1";
+        state.amount = Number(params.get("amount") || 100000);
+        state.orderCode = params.get("orderCode") || "ANPAY1787674292";
+        state.recipientName = "Ví ANPAY của bạn";
+        state.expiresAt = Date.now() + 15*60*1000;
+        return;
+      }
+
+      if(!state.paymentIntentId) throw new Error("Thiếu paymentIntentId.");
+      if(!checkoutToken) throw new Error("Thiếu checkout token.");
+
+      const res = await fetch(`${API_BASE}/api/v1/dev/mock-payments/${encodeURIComponent(state.paymentIntentId)}?token=${encodeURIComponent(checkoutToken)}`, {
+        headers: {"Accept":"application/json"}
+      });
+      const json = await res.json().catch(()=>null);
+      if(!res.ok || !json?.success) throw new Error(json?.error?.message || `Backend trả HTTP ${res.status}`);
+
+      const d = json.data;
+      state.amount = Number(d.amount || 0);
+      state.orderCode = d.orderCode || d.reference || "";
+      state.recipientName = d.recipientName || "Ví ANPAY";
+      state.status = d.status || "PENDING";
+      state.expiresAt = d.expiresAt || null;
+    } finally{
+      hideLoading();
+      updateUI();
+    }
+  }
+
+  async function confirmPayment(){
+    $("confirmOverlay").classList.remove("show");
+    showLoading("Backend đang xác nhận giao dịch...");
+    try{
+      let result;
+      if(demoMode){
+        await new Promise(r=>setTimeout(r,1200));
+        result = {status:"SUCCESS", amount:state.amount};
+      }else{
+        const res = await fetch(`${API_BASE}/api/v1/dev/mock-payments/${encodeURIComponent(state.paymentIntentId)}/confirm?token=${encodeURIComponent(checkoutToken)}`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json","Accept":"application/json"},
+          body:JSON.stringify({
+            method: state.selectedMethod,
+            bankCode: state.selectedBank
+          })
+        });
+        const json = await res.json().catch(()=>null);
+        if(!res.ok || !json?.success) throw new Error(json?.error?.message || `Backend trả HTTP ${res.status}`);
+        result = json.data || {};
+      }
+
+      state.status = result.status || "SUCCESS";
+      showResult("SUCCESS");
+    }catch(e){
+      console.error(e);
+      showResult("FAILED", e.message);
+    }finally{
+      hideLoading();
+    }
+  }
+
+  async function cancelPayment(){
+    showLoading("Đang hủy giao dịch...");
+    try{
+      if(!demoMode && state.paymentIntentId){
+        await fetch(`${API_BASE}/api/v1/dev/mock-payments/${encodeURIComponent(state.paymentIntentId)}/cancel?token=${encodeURIComponent(checkoutToken)}`, {
+          method:"POST", headers:{"Accept":"application/json"}
+        });
+      }
+      state.status = "CANCELLED";
+      showResult("CANCELLED");
+    }catch(e){
+      showResult("FAILED", e.message);
+    }finally{
+      hideLoading();
+    }
+  }
+
+  function showResult(type, errorMessage=""){
+    $("checkoutView").style.display="none";
+    $("resultView").classList.add("show");
+
+    const icon = $("statusIcon");
+    if(type==="SUCCESS"){
+      icon.className="status-icon success"; icon.textContent="✓";
+      $("statusTitle").textContent="Nạp tiền thành công";
+      $("statusDesc").innerHTML=`Backend đã xác nhận giao dịch <b>${money(state.amount)}</b>. Số dư ví sẽ được tải lại khi quay về ứng dụng.`;
+      startRedirect();
+    }else if(type==="CANCELLED"){
+      icon.className="status-icon pending"; icon.textContent="!";
+      $("statusTitle").textContent="Đã hủy giao dịch";
+      $("statusDesc").textContent="Giao dịch đã được hủy và ví ANPAY không bị thay đổi.";
+      startRedirect(3,"cancelled");
+    }else{
+      icon.className="status-icon failed"; icon.textContent="×";
+      $("statusTitle").textContent="Thanh toán thất bại";
+      $("statusDesc").textContent=errorMessage || "Backend không thể xác nhận giao dịch. Vui lòng kiểm tra log và thử lại.";
+      $("countdown").textContent="";
+    }
+  }
+
+  let redirectTimer = null;
+  function appDeepLink(status="success"){
+    const id = encodeURIComponent(state.paymentIntentId || "");
+    return `anpay://payment-result?status=${encodeURIComponent(status)}&paymentIntentId=${id}`;
+  }
+  function goBackToApp(status="success"){
+    location.href = appDeepLink(status);
+  }
+  function startRedirect(seconds=4,status="success"){
+    let n=seconds;
+    $("countdown").textContent=`Tự động quay lại ứng dụng sau ${n} giây...`;
+    redirectTimer = setInterval(()=>{
+      n--;
+      if(n<=0){
+        clearInterval(redirectTimer);
+        $("countdown").textContent="Đang mở ANPAY...";
+        goBackToApp(status);
+      }else{
+        $("countdown").textContent=`Tự động quay lại ứng dụng sau ${n} giây...`;
+      }
+    },1000);
+  }
+
+  function showLoading(text){
+    $("loadingText").textContent=text;
+    $("loadingLayer").classList.add("show");
+  }
+  function hideLoading(){ $("loadingLayer").classList.remove("show"); }
+
+  document.querySelectorAll(".method-tab").forEach(btn=>{
+    btn.onclick=()=>{
+      document.querySelectorAll(".method-tab").forEach(x=>x.classList.remove("active"));
+      btn.classList.add("active");
+      state.selectedMethod=btn.dataset.method;
+      if(state.selectedMethod!=="bank") state.selectedBank=null;
+      $("bankSection").style.display=state.selectedMethod==="bank" ? "block":"none";
+      updateUI();
+    };
+  });
+
+  $("toggleBanks").onclick=()=>{state.expandedBanks=!state.expandedBanks;renderBanks()};
+  $("payBtn").onclick=()=>{
+    const bankText = state.selectedBank ? (banks.find(b=>b.code===state.selectedBank)?.name || state.selectedBank) : "phương thức đã chọn";
+    $("confirmText").innerHTML=`Bạn đang mô phỏng thanh toán <b>${money(state.amount)}</b> qua <b>${bankText}</b>.<br><br>Backend sẽ là nơi xác nhận và cộng tiền vào ví.`;
+    $("confirmOverlay").classList.add("show");
+  };
+  $("closeConfirm").onclick=()=>$("confirmOverlay").classList.remove("show");
+  $("confirmPay").onclick=confirmPayment;
+  $("cancelBtn").onclick=cancelPayment;
+  $("backAppBtn").onclick=()=>goBackToApp(state.status==="CANCELLED"?"cancelled":"success");
+  $("stayBtn").onclick=()=>{ if(redirectTimer) clearInterval(redirectTimer); $("countdown").textContent="Tự động chuyển trang đã được dừng."; };
+
+  renderBanks();
+  updateUI();
+
+  loadPayment().catch(e=>{
+    console.error(e);
+    hideLoading();
+    showResult("FAILED", e.message);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,314 @@
+openapi: 3.1.0
+info:
+  title: AnPay API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+paths:
+  /auth/register:
+    post:
+      summary: Register with email or a Firebase-verified phone
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fullName, password]
+              properties:
+                fullName: {type: string, maxLength: 160}
+                email: {type: string, format: email, maxLength: 160}
+                phone:
+                  type: string
+                  maxLength: 32
+                  description: Optional consistency check; firebaseIdToken is required when phone is present.
+                password: {type: string, minLength: 8, maxLength: 128}
+                firebaseIdToken:
+                  type: string
+                  maxLength: 4096
+                  description: Required for phone registration; the verified token is the authoritative phone source.
+      responses:
+        '200': {description: AnPay access and refresh tokens}
+        '400': {description: Missing contact, phone verification, or phone/token mismatch}
+        '409': {description: Email, verified phone, or Firebase phone UID already exists}
+  /auth/login:
+    post:
+      summary: Login with email or Vietnamese phone number and password
+      description: >-
+        The identifier may be an email address or a Vietnamese phone number.
+        Phone numbers such as 0912345678, 84912345678, and +84912345678 are
+        normalized to E.164 before the account is looked up.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+                  description: Account email or Vietnamese phone number.
+                  examples: ['0912345678']
+                password:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  format: password
+                deviceId:
+                  type: string
+                  maxLength: 255
+                  description: Optional client device identifier attached to the refresh session.
+            examples:
+              phonePassword:
+                summary: Phone and password login
+                value:
+                  identifier: '0912345678'
+                  password: 'Password123!'
+                  deviceId: 'android-device-1'
+      responses:
+        '200':
+          description: AnPay access and refresh tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, timestamp]
+                properties:
+                  success: {type: boolean, const: true}
+                  data:
+                    type: object
+                    required: [accessToken, refreshToken, tokenType, expiresInSeconds]
+                    properties:
+                      accessToken: {type: string}
+                      refreshToken: {type: string}
+                      tokenType: {type: string, const: Bearer}
+                      expiresInSeconds: {type: integer, format: int64, example: 900}
+                  error: {type: 'null'}
+                  timestamp: {type: string, format: date-time}
+        '400': {description: Invalid request or malformed Vietnamese phone number}
+        '401': {description: Invalid identifier or password}
+        '403': {description: Account is not active}
+  /auth/email/send-otp:
+    post:
+      summary: Send an email OTP for registration
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: {type: string, format: email, maxLength: 160}
+      responses:
+        '200': {description: Challenge metadata; the OTP is queued for SMTP delivery}
+        '409': {description: Email is already registered}
+        '429': {description: A new OTP was requested too soon or the resend limit was reached}
+  /auth/email/resend-otp:
+    post:
+      summary: Replace an existing email OTP challenge and queue a new email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, email]
+              properties:
+                challengeId: {type: string, format: uuid}
+                email: {type: string, format: email, maxLength: 160}
+      responses:
+        '200': {description: New single-use challenge metadata}
+        '400': {description: Invalid, used, or mismatched challenge}
+        '409': {description: Email was registered after the challenge was issued}
+        '429': {description: Resend requested too soon or too many times}
+  /auth/email/verify-otp:
+    post:
+      summary: Verify email OTP, register the account, and issue AnPay tokens
+      description: >-
+        fullName and password are required. An existing email is rejected with
+        ACCOUNT_EXISTS. Successful verification creates the account and sets
+        emailVerified=true.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, email, otp, fullName, password]
+              properties:
+                challengeId: {type: string, format: uuid}
+                email: {type: string, format: email, maxLength: 160}
+                otp: {type: string, pattern: '^[0-9]{6}$'}
+                deviceId: {type: string, maxLength: 255}
+                fullName:
+                  type: string
+                  maxLength: 160
+                  description: Name for the new account.
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  format: password
+                  description: Password for the new account.
+            examples:
+              registerByOtp:
+                value:
+                  challengeId: '6f40bf19-f51b-4375-b057-d3024d7ad8de'
+                  email: 'user@example.com'
+                  otp: '482951'
+                  deviceId: 'android-device-1'
+                  fullName: 'Nguyen Van A'
+                  password: 'Password123!'
+      responses:
+        '200': {description: AnPay access and refresh tokens}
+        '400': {description: Missing registration details or invalid, expired, used, or mismatched OTP}
+        '409': {description: Email is already registered}
+        '429': {description: Maximum verification attempts reached}
+  /auth/phone:
+    post:
+      summary: Exchange a freshly verified Firebase Phone ID token for AnPay tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [firebaseIdToken]
+              properties:
+                firebaseIdToken: {type: string, maxLength: 4096}
+                deviceId: {type: string, maxLength: 255}
+      responses:
+        '200': {description: AnPay access and refresh tokens}
+        '401': {description: Invalid token or phone is not linked}
+  /auth/phone/send-otp:
+    post:
+      summary: Issue a phone OTP challenge for local/demo use only
+      description: Does not verify ownership of the entered phone number. Disabled by default.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phoneNumber]
+              properties:
+                phoneNumber: {type: string, maxLength: 32, example: '0912345678'}
+                fcmToken: {type: string, maxLength: 4096}
+      responses:
+        '200': {description: Challenge metadata and demoOtp when response delivery is selected}
+        '409': {description: Phone number is already registered}
+        '404': {description: Demo OTP feature is disabled}
+        '429': {description: Resend requested too soon or too many times}
+  /auth/phone/resend-otp:
+    post:
+      summary: Replace an existing demo phone OTP challenge
+      security: []
+      responses:
+        '200': {description: New single-use challenge}
+        '409': {description: Phone number was registered after the challenge was issued}
+        '429': {description: Resend requested too soon or too many times}
+  /auth/phone/verify-otp:
+    post:
+      summary: Verify a demo phone OTP, register, and issue AnPay tokens
+      description: >-
+        fullName and password are required when demo auto-registration is enabled.
+        Existing phone numbers are rejected with ACCOUNT_EXISTS. Auto-registered
+        demo accounts have phoneVerified=false.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, phoneNumber, otp, fullName, password]
+              properties:
+                challengeId: {type: string, format: uuid}
+                phoneNumber: {type: string, maxLength: 32}
+                otp: {type: string, pattern: '^[0-9]{6}$'}
+                deviceId: {type: string, maxLength: 255}
+                fullName:
+                  type: string
+                  maxLength: 160
+                  description: Required with password when the phone has no account.
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  format: password
+                  description: Required with fullName when the phone has no account.
+            examples:
+              registerByOtp:
+                summary: Verify OTP and register a new phone account
+                value:
+                  challengeId: '6f40bf19-f51b-4375-b057-d3024d7ad8de'
+                  phoneNumber: '0912345678'
+                  otp: '482951'
+                  deviceId: 'android-device-1'
+                  fullName: 'Nguyen Van A'
+                  password: 'Password123!'
+      responses:
+        '200': {description: AnPay access and refresh tokens}
+        '400': {description: Missing registration details or invalid, expired, used, or mismatched OTP challenge}
+        '404': {description: Demo OTP or auto-registration is disabled}
+        '409': {description: Phone number is already registered}
+        '429': {description: Maximum verification attempts reached}
+  /me/phone/link:
+    post:
+      summary: Link a Firebase-verified phone to the current AnPay account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [firebaseIdToken, currentPassword]
+              properties:
+                firebaseIdToken: {type: string, maxLength: 4096}
+                currentPassword: {type: string, maxLength: 128}
+      responses:
+        '200': {description: Phone linked to the current user}
+        '400': {description: Current password is incorrect}
+        '409': {description: Phone is already linked to another user}
+  /wallets/me:
+    get:
+      summary: Current wallet
+      responses: {'200': {description: OK}}
+  /transfers/prepare:
+    post:
+      summary: Prepare internal transfer
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: {type: string, format: uuid}
+      responses: {'200': {description: OTP required}}
+  /transfers/{id}/confirm:
+    post:
+      summary: Confirm transfer and consume OTP atomically
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses: {'200': {description: Completed or same completed result}}
+  /payments/topups/payos:
+    post:
+      summary: Create payOS payment intent
+      responses: {'200': {description: Checkout URL}}
+  /webhooks/payos:
+    post:
+      summary: Verified payOS webhook
+      security: []
+      responses: {'200': {description: Accepted}}
