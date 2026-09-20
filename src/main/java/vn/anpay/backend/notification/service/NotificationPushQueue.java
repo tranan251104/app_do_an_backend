@@ -41,8 +41,18 @@ public class NotificationPushQueue {
             payload.put("body", notification.body);
             payload.put("type", notification.type);
             payload.put("category", notification.category);
+            payload.put("priority", notification.priority == null ? "NORMAL" : notification.priority);
             if (notification.relatedTransactionId != null) {
                 payload.put("transactionId", notification.relatedTransactionId.toString());
+            }
+            if (notification.actionType != null && !notification.actionType.isBlank()) {
+                payload.put("actionType", notification.actionType);
+            }
+            if (notification.actionData != null && !notification.actionData.isBlank()) {
+                payload.put("actionData", notification.actionData);
+            }
+            if (notification.expiresAt != null) {
+                payload.put("expiresAt", notification.expiresAt.toString());
             }
             outbox.add(
                     "NOTIFICATION",

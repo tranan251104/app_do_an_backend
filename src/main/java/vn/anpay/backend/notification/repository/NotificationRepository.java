@@ -46,6 +46,20 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
             Instant cutoff
     );
 
+    @Query("""
+            select count(n)
+              from Notification n
+             where n.userId = :userId
+               and n.type like 'PROACTIVE_%'
+               and n.createdAt >= :fromInclusive
+               and n.createdAt < :toExclusive
+            """)
+    long countProactiveForUserBetween(
+            @Param("userId") UUID userId,
+            @Param("fromInclusive") Instant fromInclusive,
+            @Param("toExclusive") Instant toExclusive
+    );
+
     @Modifying
     @Query("""
             update Notification n

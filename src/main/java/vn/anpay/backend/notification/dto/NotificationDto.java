@@ -14,6 +14,10 @@ public record NotificationDto(
         String direction,
         Long balanceAfter,
         String currency,
+        String priority,
+        String actionType,
+        String actionData,
+        Instant expiresAt,
         Instant readAt,
         boolean read,
         Instant createdAt

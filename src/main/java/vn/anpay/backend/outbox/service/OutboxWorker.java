@@ -100,6 +100,10 @@ public class OutboxWorker {
         copyText(node, data, "transactionId");
         copyText(node, data, "type");
         copyText(node, data, "category");
+        copyText(node, data, "priority");
+        copyText(node, data, "actionType");
+        copyText(node, data, "actionData");
+        copyText(node, data, "expiresAt");
 
         log.info("[FCM_SEND] userId={} notificationId={} type={}",
                 userId, data.get("notificationId"), data.get("type"));

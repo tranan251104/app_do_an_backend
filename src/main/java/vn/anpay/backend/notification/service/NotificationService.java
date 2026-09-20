@@ -142,6 +142,10 @@ public class NotificationService {
                 n.direction,
                 n.balanceAfter,
                 "VND",
+                n.priority,
+                n.actionType,
+                n.actionData,
+                n.expiresAt,
                 n.readAt,
                 n.readAt != null,
                 n.createdAt

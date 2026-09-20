@@ -97,12 +97,18 @@ app:
 
     # Android Emulator can reach the Windows host through 10.0.2.2.
     # For a physical phone, replace this with your PC LAN IP or a public dev URL.
-    checkout-url: ${MOCK_PAYMENT_CHECKOUT_URL:http://192.168.1.12:8080/mock-payment.html}
+    checkout-url: ${MOCK_PAYMENT_CHECKOUT_URL:http://192.168.1.71:8080/mock-payment.html}
 
   notification:
     # Notification inbox is visible for 90 days. A scheduled cleanup removes older rows.
     retention-days: ${NOTIFICATION_RETENTION_DAYS:90}
     cleanup-cron: ${NOTIFICATION_CLEANUP_CRON:0 15 3 * * *}
+    proactive:
+      # Controlled, non-AI engagement notifications. Transaction/security events remain event-driven.
+      enabled: ${PROACTIVE_NOTIFICATIONS_ENABLED:true}
+      # Try at 09:00 and 18:00; the service still limits each user to one proactive item per day.
+      cron: ${PROACTIVE_NOTIFICATIONS_CRON:0 0 9,18 * * *}
+      zone: ${PROACTIVE_NOTIFICATIONS_ZONE:Asia/Ho_Chi_Minh}
   push:
     fcm:
       # Enable only after FIREBASE_CREDENTIALS_PATH points to a Firebase service-account JSON file.
@@ -117,3 +123,7 @@ app:
     # DEV/DEMO ONLY. The user's ANPAY wallet is debited in PostgreSQL,
     # but no real bank account receives money.
     enabled: ${MOCK_EXTERNAL_TRANSFER_ENABLED:true}
+  ai:
+    gemini:
+      api-key: ${GEMINI_API_KEY:}
+      url: ${GEMINI_URL:https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent}

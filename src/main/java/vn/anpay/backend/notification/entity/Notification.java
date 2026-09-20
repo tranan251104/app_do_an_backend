@@ -3,6 +3,7 @@ package vn.anpay.backend.notification.entity;
 import jakarta.persistence.*;
 
 import java.time.Instant;
+import java.util.Locale;
 import java.util.UUID;
 
 @Entity
@@ -39,6 +40,22 @@ public class Notification {
     @Column(name = "balance_after")
     public Long balanceAfter;
 
+    /** LOW / NORMAL / HIGH. Transaction notifications continue to default to NORMAL. */
+    @Column(nullable = false, length = 16)
+    public String priority;
+
+    /** Logical action for Flutter, for example OPEN_QR or OPEN_PROMOTIONS. */
+    @Column(name = "action_type", length = 64)
+    public String actionType;
+
+    /** Optional action payload. Kept as text so Flutter can interpret it without schema churn. */
+    @Column(name = "action_data")
+    public String actionData;
+
+    /** Optional business expiry. Retention is still controlled separately by retention-days. */
+    @Column(name = "expires_at")
+    public Instant expiresAt;
+
     @Column(name = "read_at")
     public Instant readAt;
 
@@ -66,6 +83,38 @@ public class Notification {
             String direction,
             Long balanceAfter
     ) {
+        this(
+                uid,
+                type,
+                category,
+                title,
+                body,
+                tx,
+                amount,
+                direction,
+                balanceAfter,
+                "NORMAL",
+                null,
+                null,
+                null
+        );
+    }
+
+    public Notification(
+            UUID uid,
+            String type,
+            String category,
+            String title,
+            String body,
+            UUID tx,
+            Long amount,
+            String direction,
+            Long balanceAfter,
+            String priority,
+            String actionType,
+            String actionData,
+            Instant expiresAt
+    ) {
         this.id = UUID.randomUUID();
         this.userId = uid;
         this.type = type;
@@ -76,6 +125,10 @@ public class Notification {
         this.amount = amount;
         this.direction = direction;
         this.balanceAfter = balanceAfter;
+        this.priority = normalizePriority(priority);
+        this.actionType = blankToNull(actionType);
+        this.actionData = blankToNull(actionData);
+        this.expiresAt = expiresAt;
         this.createdAt = Instant.now();
     }
 
@@ -98,7 +151,39 @@ public class Notification {
                 tx,
                 amount,
                 direction,
-                balanceAfter
+                balanceAfter,
+                "NORMAL",
+                "OPEN_TRANSACTION",
+                null,
+                null
+        );
+    }
+
+    public static Notification proactive(
+            UUID uid,
+            String type,
+            String category,
+            String title,
+            String body,
+            String priority,
+            String actionType,
+            String actionData,
+            Instant expiresAt
+    ) {
+        return new Notification(
+                uid,
+                type,
+                category,
+                title,
+                body,
+                null,
+                null,
+                null,
+                null,
+                priority,
+                actionType,
+                actionData,
+                expiresAt
         );
     }
 
@@ -109,5 +194,20 @@ public class Notification {
             case "NEWS", "ANNOUNCEMENT", "SYSTEM_NEWS" -> "NEWS";
             default -> "MY";
         };
+    }
+
+    private static String normalizePriority(String value) {
+        if (value == null || value.isBlank()) return "NORMAL";
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "LOW", "NORMAL", "HIGH" -> normalized;
+            default -> "NORMAL";
+        };
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }
