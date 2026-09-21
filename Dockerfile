@@ -2,6 +2,9 @@
 FROM eclipse-temurin:21-jdk-jammy AS build
 WORKDIR /app
 
+# Install unzip needed for maven wrapper
+RUN apt-get update && apt-get install -y unzip
+
 # Copy maven wrapper and pom.xml
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
