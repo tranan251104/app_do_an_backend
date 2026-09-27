@@ -60,7 +60,7 @@ public class MockPaymentService {
             NotificationRepository notifications,
             NotificationPushQueue pushQueue,
             @Value("${app.mock-payment.enabled:false}") boolean enabled,
-            @Value("${app.mock-payment.checkout-url:http://192.168.1.12:8080/mock-payment.html}") String checkoutBaseUrl,
+            @Value("${app.mock-payment.checkout-url}") String checkoutBaseUrl,
             @Value("${app.money.topup-min}") long min,
             @Value("${app.money.topup-max}") long max
     ) {

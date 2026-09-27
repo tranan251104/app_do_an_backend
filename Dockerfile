@@ -28,7 +28,7 @@ WORKDIR /app
 # Copy the built jar file from the build stage
 COPY --from=build /app/target/*.jar app.jar
 
-# Expose port 8080 (the default port for Spring Boot)
+# Local default; Spring Boot binds to Render's PORT environment variable on deploy.
 EXPOSE 8080
 
 # Run the jar file

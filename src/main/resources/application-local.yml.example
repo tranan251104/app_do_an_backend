@@ -46,7 +46,7 @@ app:
 
   mock-payment:
     enabled: true
-    checkout-url: http://10.0.2.2:8080/mock-payment.html
+    checkout-url: ${MOCK_PAYMENT_CHECKOUT_URL:${RENDER_EXTERNAL_URL:http://10.0.2.2:8080}/mock-payment.html}
 
   mock-external-transfer:
     enabled: true

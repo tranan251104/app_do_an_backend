@@ -15,8 +15,14 @@ spring:
     enabled: true
   data:
     redis:
+      # Render Key Value / managed Redis URL; when set, overrides host and port.
+      url: ${REDIS_URL:}
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
       repositories:
         enabled: false
   mail:
@@ -47,7 +53,8 @@ management:
     health:
       show-details: when_authorized
 server:
-  port: 8080
+  address: 0.0.0.0
+  port: ${PORT:8080}
 logging:
   level:
     vn.anpay.backend: ${APP_LOG_LEVEL:DEBUG}
@@ -95,9 +102,9 @@ app:
     # Always set MOCK_PAYMENT_ENABLED=false in production.
     enabled: ${MOCK_PAYMENT_ENABLED:true}
 
-    # Android Emulator can reach the Windows host through 10.0.2.2.
-    # For a physical phone, replace this with your PC LAN IP or a public dev URL.
-    checkout-url: ${MOCK_PAYMENT_CHECKOUT_URL:http://192.168.1.71:8080/mock-payment.html}
+    # Explicit override > Render public URL > local desktop URL.
+    # For local phones/emulators, set MOCK_PAYMENT_CHECKOUT_URL to a reachable URL.
+    checkout-url: ${MOCK_PAYMENT_CHECKOUT_URL:${RENDER_EXTERNAL_URL:http://localhost:8080}/mock-payment.html}
 
   notification:
     # Notification inbox is visible for 90 days. A scheduled cleanup removes older rows.

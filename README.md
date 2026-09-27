@@ -48,6 +48,42 @@ Nếu số điện thoại đã tồn tại trong bảng `users`, API gửi/gử
 
 Mail local xem tại `http://localhost:8025` (Mailpit).
 
+## URL checkout mock khi deploy Render
+
+Backend tự dùng `RENDER_EXTERNAL_URL` do Render cấp để tạo link
+`https://<service>.onrender.com/mock-payment.html`. Không cần ghi IP LAN vào source.
+Trang checkout gọi API theo cùng origin nên sử dụng cùng backend trên Render.
+
+`MOCK_PAYMENT_CHECKOUT_URL`, nếu được đặt, có độ ưu tiên cao hơn và phải là URL đầy đủ
+tới `/mock-payment.html`. Xóa biến này trên Render nếu nó còn trỏ đến IP LAN cũ,
+hoặc cập nhật nó nếu muốn dùng custom domain. Sau đó redeploy backend và tạo yêu cầu
+nạp mới: URL của payment intent cũ đã được lưu trong database, không tự đổi theo cấu hình.
+
+Khi chạy local, URL mặc định là `http://localhost:8080/mock-payment.html`;
+với điện thoại thật cần đặt biến override thành địa chỉ mà điện thoại truy cập được.
+File cấu hình local mẫu dùng `10.0.2.2` cho Android emulator, vẫn ưu tiên biến Render/override.
+
+### Các cấu hình khác trên Render
+
+- Server lắng nghe `0.0.0.0` và dùng `PORT` do Render cấp, mặc định local là `8080`.
+- PostgreSQL: đặt `DB_URL` dạng `jdbc:postgresql://<host>:5432/<database>`
+  (thêm `?sslmode=require` nếu nhà cung cấp yêu cầu), cùng `DB_USERNAME`, `DB_PASSWORD`.
+  Không dùng nguyên chuỗi `postgres://...` làm JDBC URL.
+- Redis: đặt `REDIS_URL` theo URL nhà cung cấp (`redis://` hoặc `rediss://`).
+  Hoặc dùng `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`,
+  `REDIS_SSL_ENABLED`. Không dùng `localhost` cho dịch vụ Redis chạy riêng trên Render.
+- Đặt `JWT_SECRET`, các biến `MAIL_*`, `FIREBASE_PROJECT_ID`, `GEMINI_API_KEY`
+  trong Environment của service khi sử dụng các chức năng tương ứng.
+- Nếu bật FCM, upload service-account JSON bằng Secret Files rồi đặt
+  `FIREBASE_CREDENTIALS_PATH` tới `/etc/secrets/<tên-file>`, cùng `FCM_ENABLED=true`.
+  Không commit credential hoặc dùng đường dẫn Windows trên Render.
+- Health check: `/actuator/health`. Dùng Dockerfile hiện có; không bật profile `local`
+  trên Render vì cấu hình local có thể ghi đè địa chỉ database/dịch vụ cloud.
+
+Các giá trị môi trường của database, Redis và email phải được cấu hình trên service;
+chúng không tự suy ra từ URL public của backend. `.env.example` liệt kê các biến
+được hỗ trợ. File `.env` không được Spring Boot tự động nạp.
+
 ## Đăng ký bằng OTP email
 
 1. `POST /api/v1/auth/email/send-otp` với `{ "email": "user@example.com" }` để nhận `challengeId`; email được gửi bất đồng bộ qua SMTP/outbox.
