@@ -15,8 +15,8 @@ spring:
     enabled: true
   data:
     redis:
-      # Render Key Value / managed Redis URL; when set, overrides host and port.
-      url: ${REDIS_URL:}
+      # Optional URL: set SPRING_DATA_REDIS_URL directly in the environment.
+      # Do not bind an empty URL: Spring Boot 4 treats it as an invalid URL.
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       username: ${REDIS_USERNAME:}

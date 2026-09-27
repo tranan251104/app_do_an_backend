@@ -69,9 +69,11 @@ File cấu hình local mẫu dùng `10.0.2.2` cho Android emulator, vẫn ưu ti
 - PostgreSQL: đặt `DB_URL` dạng `jdbc:postgresql://<host>:5432/<database>`
   (thêm `?sslmode=require` nếu nhà cung cấp yêu cầu), cùng `DB_USERNAME`, `DB_PASSWORD`.
   Không dùng nguyên chuỗi `postgres://...` làm JDBC URL.
-- Redis: đặt `REDIS_URL` theo URL nhà cung cấp (`redis://` hoặc `rediss://`).
+- Redis: đặt `SPRING_DATA_REDIS_URL` theo URL nhà cung cấp (`redis://` hoặc `rediss://`).
   Hoặc dùng `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`,
-  `REDIS_SSL_ENABLED`. Không dùng `localhost` cho dịch vụ Redis chạy riêng trên Render.
+  `REDIS_SSL_ENABLED`. Khi dùng host/port, không đặt `SPRING_DATA_REDIS_URL`, kể cả
+  chuỗi rỗng. Nếu đã đặt `REDIS_URL` theo hướng dẫn cũ, đổi tên biến thành
+  `SPRING_DATA_REDIS_URL`. Không dùng `localhost` cho dịch vụ Redis chạy riêng trên Render.
 - Đặt `JWT_SECRET`, các biến `MAIL_*`, `FIREBASE_PROJECT_ID`, `GEMINI_API_KEY`
   trong Environment của service khi sử dụng các chức năng tương ứng.
 - Nếu bật FCM, upload service-account JSON bằng Secret Files rồi đặt
