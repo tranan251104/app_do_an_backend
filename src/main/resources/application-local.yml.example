@@ -51,6 +51,12 @@ app:
   mock-external-transfer:
     enabled: true
 
+  notification:
+    proactive:
+      enabled: ${PROACTIVE_NOTIFICATIONS_ENABLED:true}
+      cron: ${PROACTIVE_NOTIFICATIONS_CRON:0 0 9,18 * * *}
+      zone: ${PROACTIVE_NOTIFICATIONS_ZONE:Asia/Ho_Chi_Minh}
+
   push:
     fcm:
       # Never commit the service-account JSON. Keep it outside the repository.
