@@ -1,7 +1,7 @@
 package vn.anpay.backend.ai.controller;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -9,11 +9,9 @@ import org.springframework.web.bind.annotation.RestController;
 import vn.anpay.backend.ai.dto.AiChatRequest;
 import vn.anpay.backend.ai.dto.AiChatResponse;
 import vn.anpay.backend.ai.service.FinancialAiService;
-import vn.anpay.backend.common.api.ApiError;
 import vn.anpay.backend.common.api.ApiResponse;
-
-import java.time.Instant;
-import java.util.UUID;
+import vn.anpay.backend.common.exception.BusinessException;
+import vn.anpay.backend.common.security.CurrentUser;
 
 @RestController
 @RequestMapping("/api/v1/ai")
@@ -26,16 +24,18 @@ public class AiController {
     }
 
     @PostMapping("/chat")
-    public ApiResponse<AiChatResponse> chat(@AuthenticationPrincipal Jwt jwt, @RequestBody AiChatRequest request) {
-        if (jwt == null) {
-            return new ApiResponse<>(false, null, new ApiError("UNAUTHORIZED", "Bạn chưa đăng nhập.", null, null), Instant.now());
+    public ApiResponse<AiChatResponse> chat(@AuthenticationPrincipal CurrentUser currentUser, @RequestBody AiChatRequest request) {
+        if (currentUser == null) {
+            throw new BusinessException("UNAUTHORIZED", "Bạn chưa đăng nhập.", HttpStatus.UNAUTHORIZED);
         }
         if (request == null || request.message == null || request.message.isBlank()) {
-            return new ApiResponse<>(false, null, new ApiError("BAD_REQUEST", "Vui lòng nhập tin nhắn.", null, null), Instant.now());
+            throw new BusinessException("BAD_REQUEST", "Vui lòng nhập tin nhắn.", HttpStatus.BAD_REQUEST);
         }
         
-        UUID userId = UUID.fromString(jwt.getSubject());
-        String reply = aiService.chat(userId, request.message);
+        if (request.message.length() > 4000) {
+            throw new BusinessException("BAD_REQUEST", "Tin nhắn không được quá 4000 ký tự.", HttpStatus.BAD_REQUEST);
+        }
+        String reply = aiService.chat(currentUser.userId(), request.message);
         
         return ApiResponse.ok(new AiChatResponse(reply));
     }

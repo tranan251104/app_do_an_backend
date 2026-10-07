@@ -131,6 +131,6 @@ app:
     # but no real bank account receives money.
     enabled: ${MOCK_EXTERNAL_TRANSFER_ENABLED:true}
   ai:
-    gemini:
-      api-key: ${GEMINI_API_KEY:}
-      url: ${GEMINI_URL:https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent}
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-4.1-mini}

@@ -74,7 +74,7 @@ File cấu hình local mẫu dùng `10.0.2.2` cho Android emulator, vẫn ưu ti
   `REDIS_SSL_ENABLED`. Khi dùng host/port, không đặt `SPRING_DATA_REDIS_URL`, kể cả
   chuỗi rỗng. Nếu đã đặt `REDIS_URL` theo hướng dẫn cũ, đổi tên biến thành
   `SPRING_DATA_REDIS_URL`. Không dùng `localhost` cho dịch vụ Redis chạy riêng trên Render.
-- Đặt `JWT_SECRET`, các biến `MAIL_*`, `FIREBASE_PROJECT_ID`, `GEMINI_API_KEY`
+- Đặt `JWT_SECRET`, các biến `MAIL_*`, `FIREBASE_PROJECT_ID`, `OPENAI_API_KEY`
   trong Environment của service khi sử dụng các chức năng tương ứng.
 - Nếu bật FCM, upload service-account JSON bằng Secret Files rồi đặt
   `FIREBASE_CREDENTIALS_PATH` tới `/etc/secrets/<tên-file>`, cùng `FCM_ENABLED=true`.
@@ -85,6 +85,23 @@ File cấu hình local mẫu dùng `10.0.2.2` cho Android emulator, vẫn ưu ti
 Các giá trị môi trường của database, Redis và email phải được cấu hình trên service;
 chúng không tự suy ra từ URL public của backend. `.env.example` liệt kê các biến
 được hỗ trợ. File `.env` không được Spring Boot tự động nạp.
+
+## Trợ lý AI (OpenAI GPT)
+
+Đặt `OPENAI_API_KEY` trong environment của backend/Render và tùy chọn
+`OPENAI_MODEL` (mặc định `gpt-4.1-mini`). Khởi động lại/redeploy sau khi đổi biến.
+Backend không còn dùng `GEMINI_API_KEY` hoặc `GEMINI_URL`. Không đặt key trong Flutter.
+File `.env` không được Spring Boot tự động nạp.
+
+Gọi `POST /api/v1/ai/chat` với Bearer access token AnPay và body
+`{"message":"Số dư hiện tại của tôi là bao nhiêu?"}`. Thành công trả `data.reply`.
+Tin nhắn phải có nội dung và tối đa 4000 ký tự. Backend gửi tên, số dư và
+10 giao dịch gần nhất sang OpenAI Responses API; đặt `store=false`, không lưu
+lịch sử hội thoại. AI chỉ trả lời, không thực hiện giao dịch.
+
+Lỗi trả `success=false`: `AI_NOT_CONFIGURED` (503), `AI_RATE_LIMITED` (503),
+`AI_CONNECTION_ERROR` (503), `AI_UPSTREAM_ERROR` (502), `AI_INVALID_RESPONSE` (502).
+Kết nối có timeout 3 giây, đọc phản hồi 15 giây. Không tự retry request tính phí.
 
 ## Đăng ký bằng OTP email
 

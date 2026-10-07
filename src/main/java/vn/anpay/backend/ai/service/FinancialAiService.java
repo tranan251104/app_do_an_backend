@@ -16,14 +16,14 @@ import java.util.UUID;
 @Service
 public class FinancialAiService {
 
-    private final GeminiClient geminiClient;
+    private final OpenAiClient openAiClient;
     private final WalletRepository walletRepo;
     private final LedgerTransactionRepository ledgerRepo;
     private final UserRepository userRepo;
 
-    public FinancialAiService(GeminiClient geminiClient, WalletRepository walletRepo,
+    public FinancialAiService(OpenAiClient openAiClient, WalletRepository walletRepo,
                               LedgerTransactionRepository ledgerRepo, UserRepository userRepo) {
-        this.geminiClient = geminiClient;
+        this.openAiClient = openAiClient;
         this.walletRepo = walletRepo;
         this.ledgerRepo = ledgerRepo;
         this.userRepo = userRepo;
@@ -41,7 +41,7 @@ public class FinancialAiService {
                 context +
                 "\n\nHãy dùng các thông tin trên để trả lời câu hỏi của người dùng. Trả lời bằng tiếng Việt. Nếu họ hỏi những thứ ngoài dữ liệu này (ví dụ: giao dịch từ năm ngoái), hãy xin lỗi khéo léo. Tuyệt đối KHÔNG bịa đặt số tiền hay giao dịch.";
 
-        return geminiClient.generateContent(systemInstruction, userMessage);
+        return openAiClient.generateContent(systemInstruction, userMessage);
     }
 
     private String buildFinancialContext(User user, Wallet wallet) {

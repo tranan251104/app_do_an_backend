@@ -5,4 +5,6 @@ src/main/resources/application-local.yml
 .idea/
 *.iml
 *.zip
-/src/test/
+/src/test/**
+!/src/test/**/
+!/src/test/java/vn/anpay/backend/ai/**
