@@ -16,6 +16,7 @@ public record ExternalTransferResponse(
         String providerReference,
         Instant expiresAt,
         boolean otpRequired,
-        String maskedEmail
+        String maskedEmail,
+        String otpChannel
 ) {
 }

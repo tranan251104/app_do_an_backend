@@ -74,14 +74,25 @@ public class InternalTransferOtpDispatcher {
                 outbox.add("TRANSFER", txId, "SEND_OTP_EMAIL", mapper.writeValueAsString(Map.of(
                         "challengeId", challengeId.toString(), "email", user.email, "purpose", "TRANSFER")));
             } else {
-                // No OTP is persisted to the notification inbox or returned to the API.
-                outbox.add("TRANSFER", txId, "SEND_OTP_FCM_DEMO", mapper.writeValueAsString(Map.of(
-                        "challengeId", challengeId.toString(), "userId", userId.toString(),
-                        "transactionId", txId.toString())));
+                enqueueFcmDemo(userId, txId, challengeId, "TRANSFER");
             }
         } catch (Exception ex) {
             // Roll back transaction and OTP if an event cannot be saved.
             throw new IllegalStateException("Failed to enqueue transfer OTP", ex);
+        }
+    }
+
+    /** Use for internal or external transfers; never return the plaintext OTP in an API. */
+    public void enqueueFcmDemo(UUID userId, UUID txId, UUID challengeId, String aggregate) {
+        if (!"TRANSFER".equals(aggregate) && !"EXTERNAL_TRANSFER".equals(aggregate)) {
+            throw new IllegalArgumentException("Unsupported transfer OTP aggregate");
+        }
+        try {
+            outbox.add(aggregate, txId, "SEND_OTP_FCM_DEMO", mapper.writeValueAsString(Map.of(
+                    "challengeId", challengeId.toString(), "userId", userId.toString(),
+                    "transactionId", txId.toString())));
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to enqueue demo transfer OTP", ex);
         }
     }
 

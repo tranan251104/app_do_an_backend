@@ -131,7 +131,9 @@ app:
     # Do not enable on any service holding real funds.
     allow-unverified-phone-recipient: ${TRANSFER_ALLOW_UNVERIFIED_PHONE_RECIPIENT:false}
     demo-phone-otp:
-      # Only for phone-only senders with a registered FCM device. NOT a real SMS OTP.
+      # Phone-only senders may use FCM demo OTP for BOTH internal and mock bank transfers.
+      # Requires FCM_ENABLED=true and a device registered to the logged-in user.
+      # NOT SMS, NOT proof of SIM ownership. Enable ONLY for isolated demo accounts.
       enabled: ${TRANSFER_DEMO_PHONE_OTP_ENABLED:false}
   mock-external-transfer:
     # DEV/DEMO ONLY. The user's ANPAY wallet is debited in PostgreSQL,

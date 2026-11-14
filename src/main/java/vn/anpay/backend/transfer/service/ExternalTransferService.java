@@ -60,6 +60,7 @@ public class ExternalTransferService {
     private final PayoutProvider payout;
     private final ObjectMapper mapper;
     private final TransferIdempotencyLock idempotencyLock;
+    private final InternalTransferOtpDispatcher otpDispatcher;
     private final long min;
     private final long max;
     private final boolean enabled;
@@ -81,6 +82,7 @@ public class ExternalTransferService {
             PayoutProvider payout,
             ObjectMapper mapper,
             TransferIdempotencyLock idempotencyLock,
+            InternalTransferOtpDispatcher otpDispatcher,
             @Value("${app.money.transfer-min}") long min,
             @Value("${app.money.transfer-max}") long max,
             @Value("${app.mock-external-transfer.enabled:true}") boolean enabled
@@ -101,6 +103,7 @@ public class ExternalTransferService {
         this.payout = payout;
         this.mapper = mapper;
         this.idempotencyLock = idempotencyLock;
+        this.otpDispatcher = otpDispatcher;
         this.min = min;
         this.max = max;
         this.enabled = enabled;
@@ -139,7 +142,9 @@ public class ExternalTransferService {
             throw bad("AMOUNT_OUT_OF_RANGE", "Số tiền ngoài hạn mức");
         }
 
-        var otpUser = requireOtpEmailUser(userId);
+        // Both email and phone-only accounts can initiate mock bank transfers.
+        // A phone-only account requires explicitly enabled FCM demo OTP.
+        var otpChannel = otpDispatcher.channelFor(userId);
 
         var sender = wallets.findByUserId(userId)
                 .orElseThrow(() -> new BusinessException("WALLET_NOT_FOUND", "Không tìm thấy ví", HttpStatus.NOT_FOUND));
@@ -157,7 +162,7 @@ public class ExternalTransferService {
         tx.receiverWalletId = null;
         tx.provider = PROVIDER;
         tx.description = buildDescription(request);
-        tx.metadata = metadata(request);
+        tx.metadata = metadata(request, otpChannel);
         txs.save(tx);
 
         var issued = otp.issue(userId, PURPOSE, tx.id);
@@ -176,17 +181,12 @@ public class ExternalTransferService {
         transfer.createdAt = Instant.now();
         requests.save(transfer);
 
-        queueExternalTransferOtpEmail(
-                otpUser.email,
-                tx,
-                issued.challenge().id,
-                request.bankName(),
-                request.accountNumber()
-        );
+        enqueueOtp(userId, otpChannel, tx, issued.challenge().id,
+                request.bankName(), request.accountNumber());
 
         log.info(
-                "MOCK EXTERNAL TRANSFER prepared userId={} txId={} bankBin={} account={} amount={} otpEmail={}",
-                userId, tx.id, request.bankBin(), maskAccount(request.accountNumber()), request.amount(), maskEmail(otpUser.email)
+                "MOCK EXTERNAL TRANSFER prepared userId={} txId={} bankBin={} account={} amount={} otpChannel={}",
+                userId, tx.id, request.bankBin(), maskAccount(request.accountNumber()), request.amount(), otpChannel
         );
 
         return response(transfer);
@@ -203,7 +203,14 @@ public class ExternalTransferService {
             throw bad("TRANSFER_STATE_INVALID", "Giao dịch không còn chờ OTP");
         }
 
-        var otpUser = requireOtpEmailUser(userId);
+        // A pending transfer keeps the delivery channel chosen at prepare.
+        // For legacy transactions without metadata, the channel was email-only.
+        var info = readMetadata(tx);
+        var originalChannel = channelFromMetadata(info);
+        var currentChannel = otpDispatcher.channelFor(userId);
+        if (originalChannel != currentChannel) {
+            throw bad("OTP_CHANNEL_CHANGED", "Phương thức nhận OTP đã thay đổi; vui lòng tạo giao dịch mới");
+        }
         var old = otpRepo.lockById(transfer.otpChallengeId).orElseThrow();
         if (old.resendAvailableAt.isAfter(Instant.now())) {
             throw new BusinessException(
@@ -224,18 +231,12 @@ public class ExternalTransferService {
         requests.save(transfer);
         delivery.stage(issued.challenge().id, issued.plaintextCode());
 
-        var info = readMetadata(tx);
-        queueExternalTransferOtpEmail(
-                otpUser.email,
-                tx,
-                issued.challenge().id,
-                text(info, "bankName"),
-                text(info, "accountNumber")
-        );
+        enqueueOtp(userId, originalChannel, tx, issued.challenge().id,
+                text(info, "bankName"), text(info, "accountNumber"));
 
         log.info(
-                "[OTP_RESEND] External transfer OTP reissued userId={} txId={} resendNumber={} email={} expiresAt={}",
-                userId, txId, resendNumber, maskEmail(otpUser.email), issued.challenge().expiresAt
+                "[OTP_RESEND] External transfer OTP reissued userId={} txId={} resendNumber={} otpChannel={} expiresAt={}",
+                userId, txId, resendNumber, originalChannel, issued.challenge().expiresAt
         );
 
         return response(transfer);
@@ -383,21 +384,38 @@ public class ExternalTransferService {
                 tx.providerReference,
                 transfer.expiresAt,
                 "OTP_REQUIRED".equals(tx.status),
-                maskedEmailForTransaction(tx)
+                maskedEmailForTransaction(tx),
+                channelFromMetadata(info).name()
         );
     }
 
-    private vn.anpay.backend.user.entity.User requireOtpEmailUser(UUID userId) {
-        var user = users.findById(userId)
-                .orElseThrow(() -> new BusinessException("USER_NOT_FOUND", "Không tìm thấy người dùng", HttpStatus.NOT_FOUND));
-        if (user.email == null || user.email.isBlank()) {
-            throw new BusinessException(
-                    "OTP_EMAIL_NOT_AVAILABLE",
-                    "Tài khoản AnPay chưa có email để nhận OTP",
-                    HttpStatus.BAD_REQUEST
-            );
+    private InternalTransferOtpDispatcher.Channel channelFromMetadata(Map<String, Object> info) {
+        // All existing bank transfers before this change used EMAIL.
+        return "FCM_DEMO".equals(text(info, "otpChannel"))
+                ? InternalTransferOtpDispatcher.Channel.FCM_DEMO
+                : InternalTransferOtpDispatcher.Channel.EMAIL;
+    }
+
+    private void enqueueOtp(
+            UUID userId,
+            InternalTransferOtpDispatcher.Channel channel,
+            LedgerTransaction tx,
+            UUID challengeId,
+            String bankName,
+            String accountNumber
+    ) {
+        if (channel == InternalTransferOtpDispatcher.Channel.FCM_DEMO) {
+            // Reuse the same demo delivery infrastructure as internal transfers,
+            // but keep the EXTERNAL_TRANSFER OTP purpose for verification.
+            otpDispatcher.enqueueFcmDemo(userId, tx.id, challengeId, "EXTERNAL_TRANSFER");
+            return;
         }
-        return user;
+        var user = users.findById(userId)
+                .orElseThrow(() -> bad("USER_NOT_FOUND", "Không tìm thấy tài khoản"));
+        if (user.email == null || user.email.isBlank()) {
+            throw bad("OTP_EMAIL_NOT_AVAILABLE", "Tài khoản chưa có email để nhận OTP");
+        }
+        queueExternalTransferOtpEmail(user.email, tx, challengeId, bankName, accountNumber);
     }
 
     private void queueExternalTransferOtpEmail(
@@ -463,10 +481,11 @@ public class ExternalTransferService {
         return String.format(Locale.US, "%,d", amount).replace(',', '.') + " VND";
     }
 
-    private String metadata(ExternalTransferPrepareRequest request) {
+    private String metadata(ExternalTransferPrepareRequest request, InternalTransferOtpDispatcher.Channel channel) {
         try {
             var value = new LinkedHashMap<String, Object>();
             value.put("simulation", true);
+            value.put("otpChannel", channel.name());
             value.put("bankBin", request.bankBin().trim());
             value.put("bankName", request.bankName().trim());
             value.put("accountNumber", request.accountNumber().trim());
