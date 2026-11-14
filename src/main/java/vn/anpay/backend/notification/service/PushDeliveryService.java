@@ -61,6 +61,32 @@ public class PushDeliveryService {
         }
     }
 
+    /** Dedicated FCM demo channel. Not stored in the user's transaction notification inbox. */
+    public void sendDemoTransferOtpToUser(UUID userId, String otp, String transactionId) {
+        var activeDevices = devices.findByUserIdAndEnabledTrue(userId);
+        if (activeDevices.isEmpty()) {
+            throw new IllegalStateException("No registered FCM device for transfer OTP demo");
+        }
+        boolean delivered = false;
+        RuntimeException lastFailure = null;
+        for (var device : activeDevices) {
+            try {
+                fcm.send(device.fcmToken,
+                        "AnPay - OTP chuyển tiền (DEMO)",
+                        "Mã xác nhận giao dịch: " + otp + ". Hiệu lực 5 phút.",
+                        Map.of("type", "TRANSFER_OTP_DEMO", "transactionId", transactionId));
+                delivered = true;
+            } catch (InvalidFcmTokenException ex) {
+                deviceService.disableInvalidToken(device.fcmToken);
+            } catch (RuntimeException ex) {
+                lastFailure = ex;
+            }
+        }
+        if (!delivered) {
+            throw new IllegalStateException("Unable to deliver transfer OTP to any FCM device", lastFailure);
+        }
+    }
+
     private String safeMessage(Exception ex) {
         String value = ex.getMessage();
         if (value == null) return "";

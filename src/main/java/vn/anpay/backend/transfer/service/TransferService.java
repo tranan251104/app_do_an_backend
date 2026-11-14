@@ -40,8 +40,10 @@ public class TransferService {
     private final OtpDeliveryService delivery;
     private final ObjectMapper mapper;
     private final TransferIdempotencyLock idempotencyLock;
+    private final TransferRecipientResolver recipients;
+    private final InternalTransferOtpDispatcher otpDispatcher;
     private final long min,max;
-    public TransferService(WalletRepository w,UserRepository u,LedgerAccountRepository a,LedgerTransactionRepository t,LedgerEntryRepository e,TransferRequestRepository r,OtpRepository or,OtpService o,NotificationRepository n,NotificationPushQueue pushQueue,OutboxService out,OtpDeliveryService d,ObjectMapper mapper,TransferIdempotencyLock idempotencyLock,@Value("${app.money.transfer-min}")long min,@Value("${app.money.transfer-max}")long max) {
+    public TransferService(WalletRepository w,UserRepository u,LedgerAccountRepository a,LedgerTransactionRepository t,LedgerEntryRepository e,TransferRequestRepository r,OtpRepository or,OtpService o,NotificationRepository n,NotificationPushQueue pushQueue,OutboxService out,OtpDeliveryService d,ObjectMapper mapper,TransferIdempotencyLock idempotencyLock,TransferRecipientResolver recipients,InternalTransferOtpDispatcher otpDispatcher,@Value("${app.money.transfer-min}")long min,@Value("${app.money.transfer-max}")long max) {
         wallets=w;
         users=u;
         accounts=a;
@@ -56,6 +58,8 @@ public class TransferService {
         delivery=d;
         this.mapper=mapper;
         this.idempotencyLock=idempotencyLock;
+        this.recipients=recipients;
+        this.otpDispatcher=otpDispatcher;
         this.min=min;
         this.max=max;
 
@@ -67,8 +71,11 @@ public class TransferService {
         if(existing.isPresent()) {
             var prior=existing.get();
             var priorTx=txs.findById(prior.transactionId).orElseThrow();
+            // Compare the *resolved* wallet instead of the phone text. Otherwise
+            // retrying a phone-based request would always report a conflict.
+            String resolvedWallet = recipients.resolve(r).walletCode;
             if(priorTx.amount!=r.amount()
-                    ||!Objects.equals(prior.recipientReference,r.recipientWalletCode().trim())
+                    ||!Objects.equals(prior.recipientReference,resolvedWallet)
                     ||!Objects.equals(prior.note,r.note())) {
                 throw new BusinessException("IDEMPOTENCY_CONFLICT","Idempotency-Key đã được dùng với nội dung khác",HttpStatus.CONFLICT);
             }
@@ -76,10 +83,11 @@ public class TransferService {
         }
         if(r.amount()<min||r.amount()>max)throw bad("AMOUNT_OUT_OF_RANGE","Số tiền ngoài hạn mức");
         Wallet sender=wallets.findByUserId(userId).orElseThrow();
-        Wallet receiver=wallets.findByWalletCode(r.recipientWalletCode().trim()).orElseThrow(()->bad("RECIPIENT_NOT_FOUND","Không tìm thấy tài khoản nhận"));
+        Wallet receiver=recipients.resolve(r);
         if(sender.id.equals(receiver.id))throw bad("SELF_TRANSFER","Không thể chuyển tiền cho chính mình");
         if(!"ACTIVE".equals(sender.status)||!"ACTIVE".equals(receiver.status))throw bad("WALLET_UNAVAILABLE","Ví không khả dụng");
         if(sender.availableBalance<r.amount())throw bad("INSUFFICIENT_BALANCE","Số dư không đủ");
+        var otpChannel=otpDispatcher.channelFor(userId);
         var tx=LedgerTransaction.create("INTERNAL_TRANSFER",r.amount());
         tx.status="OTP_REQUIRED";
         tx.senderWalletId=sender.id;
@@ -100,14 +108,7 @@ public class TransferService {
         tr.expiresAt=issued.challenge().expiresAt;
         tr.createdAt=Instant.now();
         requests.save(tr);
-        users.findById(userId).filter(x->x.email!=null).ifPresent(u-> {
-            try {
-                outbox.add("TRANSFER",tx.id,"SEND_OTP_EMAIL",mapper.writeValueAsString(Map.of("challengeId",issued.challenge().id.toString(),"email",u.email,"purpose","TRANSFER")));
-            } catch(Exception ignored) {
-
-            }
-
-        });
+        otpDispatcher.enqueue(userId, tx.id, issued.challenge().id, otpChannel);
         return response(tr);
 
     }
@@ -117,6 +118,7 @@ public class TransferService {
         var tr=internalTransfer(txId);
         requireSender(tr,userId);
         if(!"OTP_REQUIRED".equals(tx.status))throw bad("TRANSFER_STATE_INVALID","Giao dịch không còn chờ OTP");
+        var otpChannel=otpDispatcher.channelFor(userId);
         var old=otpRepo.lockById(tr.otpChallengeId).orElseThrow();
         if(old.resendAvailableAt.isAfter(Instant.now()))throw new BusinessException("OTP_RESEND_TOO_SOON","Vui lòng chờ trước khi gửi lại OTP",HttpStatus.TOO_MANY_REQUESTS);
         old.consumedAt=Instant.now();
@@ -126,14 +128,7 @@ public class TransferService {
         tr.expiresAt=issued.challenge().expiresAt;
         requests.save(tr);
         delivery.stage(issued.challenge().id,issued.plaintextCode());
-        users.findById(userId).filter(x->x.email!=null).ifPresent(u-> {
-            try {
-                outbox.add("TRANSFER",tx.id,"SEND_OTP_EMAIL",mapper.writeValueAsString(Map.of("challengeId",issued.challenge().id.toString(),"email",u.email,"purpose","TRANSFER")));
-            } catch(Exception ignored) {
-
-            }
-
-        });
+        otpDispatcher.enqueue(userId, tx.id, issued.challenge().id, otpChannel);
         return response(tr);
 
     }
@@ -217,7 +212,9 @@ public class TransferService {
         var tx=txs.findById(tr.transactionId).orElseThrow();
         var rw=wallets.findById(tx.receiverWalletId).orElseThrow();
         var ru=users.findById(rw.userId).orElseThrow();
-        return new TransferResponse(tx.id,tx.reference,tx.amount,tx.status,rw.walletCode,mask(ru.fullName),tr.expiresAt,"OTP_REQUIRED".equals(tx.status));
+        var su=users.findById(tr.userId).orElse(null);
+        String otpChannel=(su!=null&&su.email!=null&&!su.email.isBlank())?"EMAIL":"FCM_DEMO";
+        return new TransferResponse(tx.id,tx.reference,tx.amount,tx.status,rw.walletCode,mask(ru.fullName),tr.expiresAt,"OTP_REQUIRED".equals(tx.status),otpChannel);
 
     }
     private TransferRequest internalTransfer(UUID txId) {

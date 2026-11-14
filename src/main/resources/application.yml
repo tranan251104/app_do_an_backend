@@ -126,6 +126,13 @@ app:
     # Transaction history opens with 30 days by default. Each query may span at most 366 days.
     default-days: ${HISTORY_DEFAULT_DAYS:30}
     max-range-days: ${HISTORY_MAX_RANGE_DAYS:366}
+  transfer:
+    # Permit phone lookup of accounts without Firebase phone verification in a demo ONLY.
+    # Do not enable on any service holding real funds.
+    allow-unverified-phone-recipient: ${TRANSFER_ALLOW_UNVERIFIED_PHONE_RECIPIENT:false}
+    demo-phone-otp:
+      # Only for phone-only senders with a registered FCM device. NOT a real SMS OTP.
+      enabled: ${TRANSFER_DEMO_PHONE_OTP_ENABLED:false}
   mock-external-transfer:
     # DEV/DEMO ONLY. The user's ANPAY wallet is debited in PostgreSQL,
     # but no real bank account receives money.
