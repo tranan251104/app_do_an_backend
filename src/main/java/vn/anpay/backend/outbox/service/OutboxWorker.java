@@ -57,6 +57,7 @@ public class OutboxWorker {
             try {
                 switch (event.eventType) {
                     case "SEND_OTP_EMAIL" -> sendOtpEmail(event.payload);
+                    case "SEND_OTP_FCM_DEMO" -> sendDemoTransferOtp(event.payload);
                     case "SEND_PUSH_NOTIFICATION" -> sendPushNotification(event.payload);
                     // Legacy domain events created by older service code had no consumer.
                     // Keep them harmless so already-persisted rows do not become FAILED.
@@ -115,6 +116,25 @@ public class OutboxWorker {
         if (!value.isBlank()) {
             target.put(field, value);
         }
+    }
+
+    private void sendDemoTransferOtp(String payload) throws Exception {
+        JsonNode node = mapper.readTree(payload);
+        UUID challengeId = UUID.fromString(requiredText(node, "challengeId"));
+        UUID userId = UUID.fromString(requiredText(node, "userId"));
+        String txId = requiredText(node, "transactionId");
+        String code = otp.peek(challengeId);
+        if (code == null || code.isBlank()) {
+            throw new IllegalStateException("OTP delivery code no longer available");
+        }
+        pushDelivery.sendDemoTransferOtpToUser(userId, code, txId);
+        // Cleanup only after outbox commit, same semantics as the mail sender.
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() {
+                try { otp.consume(challengeId); }
+                catch (Exception ex) { log.warn("[OTP_CLEANUP_ERR] Cannot clear OTP challengeId={}", challengeId); }
+            }
+        });
     }
 
     private void sendOtpEmail(String payload) throws Exception {
