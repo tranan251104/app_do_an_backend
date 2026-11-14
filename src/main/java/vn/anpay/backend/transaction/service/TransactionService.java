@@ -142,7 +142,7 @@ public class TransactionService {
         String bankCode = null;
         boolean simulated = false;
 
-        if ("INTERNAL_TRANSFER".equals(tx.type)) {
+        if ("INTERNAL_TRANSFER".equals(tx.type) || "LUCKY_MONEY".equals(tx.type)) {
             UUID otherWalletId = "OUT".equals(direction) ? tx.receiverWalletId : tx.senderWalletId;
             if (otherWalletId != null) {
                 var otherWallet = wallets.findById(otherWalletId).orElse(null);
@@ -201,6 +201,7 @@ public class TransactionService {
     }
 
     private String title(String type, String direction) {
+        if ("LUCKY_MONEY".equals(type)) return "IN".equals(direction) ? "Nhận lì xì" : "Gửi lì xì";
         if ("INTERNAL_TRANSFER".equals(type)) {
             return "IN".equals(direction) ? "Nhận tiền" : "Chuyển tiền";
         }
