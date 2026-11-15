@@ -127,7 +127,7 @@ public class OutboxWorker {
         if (code == null || code.isBlank()) {
             throw new IllegalStateException("OTP delivery code no longer available");
         }
-        pushDelivery.sendDemoTransferOtpToUser(userId, code, txId);
+        pushDelivery.sendDemoTransferOtpToUser(userId, code, txId, node.path("purpose").asText("TRANSFER"));
         // Cleanup only after outbox commit, same semantics as the mail sender.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
@@ -151,7 +151,15 @@ public class OutboxWorker {
         String subject;
         String text;
 
-        if ("EXTERNAL_TRANSFER".equals(purpose)) {
+        if ("WITHDRAWAL".equals(purpose)) {
+            subject = "AnPay - Mã OTP rút tiền mô phỏng";
+            text = "Mã OTP rút tiền AnPay: " + code + "\n"
+                    + "Số tiền: " + node.path("amountFormatted").asText("") + "\n"
+                    + "Ngân hàng: " + node.path("bankName").asText("") + "\n"
+                    + "Tài khoản: " + node.path("accountNumberMasked").asText("") + "\n"
+                    + "Mã giao dịch: " + node.path("reference").asText("") + "\n\n"
+                    + "OTP có hiệu lực trong 5 phút. Không chia sẻ mã này. Đây là giao dịch mô phỏng.";
+        } else if ("EXTERNAL_TRANSFER".equals(purpose)) {
             subject = "AnPay - Mã OTP xác nhận chuyển tiền";
             text = externalTransferMessage(node, code);
         } else if ("PASSWORD_RESET".equals(purpose)) {

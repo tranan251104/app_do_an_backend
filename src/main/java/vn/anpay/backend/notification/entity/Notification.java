@@ -190,7 +190,7 @@ public class Notification {
     private static String inferCategory(String type) {
         if (type == null) return "MY";
         return switch (type) {
-            case "TOPUP_SUCCESS", "TRANSFER_SENT", "TRANSFER_RECEIVED", "EXTERNAL_TRANSFER_SENT" -> "BALANCE_CHANGE";
+            case "TOPUP_SUCCESS", "TRANSFER_SENT", "TRANSFER_RECEIVED", "EXTERNAL_TRANSFER_SENT", "WITHDRAWAL_COMPLETED" -> "BALANCE_CHANGE";
             case "NEWS", "ANNOUNCEMENT", "SYSTEM_NEWS" -> "NEWS";
             default -> "MY";
         };

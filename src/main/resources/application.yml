@@ -135,6 +135,12 @@ app:
       # Requires FCM_ENABLED=true and a device registered to the logged-in user.
       # NOT SMS, NOT proof of SIM ownership. Enable ONLY for isolated demo accounts.
       enabled: ${TRANSFER_DEMO_PHONE_OTP_ENABLED:false}
+  withdrawal:
+    # DEMO ONLY: Only a simulated bank payout; no real funds reach the bank.
+    # Keep disabled unless using isolated test/demo accounts with virtual money.
+    demo-enabled: ${WITHDRAWAL_DEMO_ENABLED:false}
+    min: ${WITHDRAWAL_MIN:10000}
+    max: ${WITHDRAWAL_MAX:50000000}
   mock-external-transfer:
     # DEV/DEMO ONLY. The user's ANPAY wallet is debited in PostgreSQL,
     # but no real bank account receives money.

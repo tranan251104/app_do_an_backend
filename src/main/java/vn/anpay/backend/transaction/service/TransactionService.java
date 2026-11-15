@@ -153,7 +153,7 @@ public class TransactionService {
                             .orElse("Người dùng AnPay");
                 }
             }
-        } else if ("EXTERNAL_BANK_TRANSFER".equals(tx.type)) {
+        } else if ("EXTERNAL_BANK_TRANSFER".equals(tx.type) || "WITHDRAWAL".equals(tx.type)) {
             var metadata = readMetadata(tx.metadata);
             bankName = text(metadata, "bankName");
             bankCode = text(metadata, "bankBin");
@@ -206,6 +206,7 @@ public class TransactionService {
             return "IN".equals(direction) ? "Nhận tiền" : "Chuyển tiền";
         }
         if ("EXTERNAL_BANK_TRANSFER".equals(type)) return "Chuyển ngân hàng";
+        if ("WITHDRAWAL".equals(type)) return "Rút tiền về ngân hàng";
         if ("TOP_UP".equals(type)) return "Nạp tiền";
         return "Giao dịch AnPay";
     }
