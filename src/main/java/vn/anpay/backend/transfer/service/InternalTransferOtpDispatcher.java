@@ -84,13 +84,13 @@ public class InternalTransferOtpDispatcher {
 
     /** Use for internal or external transfers; never return the plaintext OTP in an API. */
     public void enqueueFcmDemo(UUID userId, UUID txId, UUID challengeId, String aggregate) {
-        if (!"TRANSFER".equals(aggregate) && !"EXTERNAL_TRANSFER".equals(aggregate)) {
+        if (!"TRANSFER".equals(aggregate) && !"EXTERNAL_TRANSFER".equals(aggregate) && !"WITHDRAWAL".equals(aggregate)) {
             throw new IllegalArgumentException("Unsupported transfer OTP aggregate");
         }
         try {
             outbox.add(aggregate, txId, "SEND_OTP_FCM_DEMO", mapper.writeValueAsString(Map.of(
                     "challengeId", challengeId.toString(), "userId", userId.toString(),
-                    "transactionId", txId.toString())));
+                    "transactionId", txId.toString(), "purpose", aggregate)));
         } catch (Exception ex) {
             throw new IllegalStateException("Failed to enqueue demo transfer OTP", ex);
         }

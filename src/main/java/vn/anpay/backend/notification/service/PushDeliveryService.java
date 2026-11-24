@@ -62,7 +62,7 @@ public class PushDeliveryService {
     }
 
     /** Dedicated FCM demo channel. Not stored in the user's transaction notification inbox. */
-    public void sendDemoTransferOtpToUser(UUID userId, String otp, String transactionId) {
+    public void sendDemoTransferOtpToUser(UUID userId, String otp, String transactionId, String purpose) {
         var activeDevices = devices.findByUserIdAndEnabledTrue(userId);
         if (activeDevices.isEmpty()) {
             throw new IllegalStateException("No registered FCM device for transfer OTP demo");
@@ -72,9 +72,9 @@ public class PushDeliveryService {
         for (var device : activeDevices) {
             try {
                 fcm.send(device.fcmToken,
-                        "AnPay - OTP chuyển tiền (DEMO)",
+                        "WITHDRAWAL".equals(purpose) ? "AnPay - OTP rút tiền (DEMO)" : "AnPay - OTP chuyển tiền (DEMO)",
                         "Mã xác nhận giao dịch: " + otp + ". Hiệu lực 5 phút.",
-                        Map.of("type", "TRANSFER_OTP_DEMO", "transactionId", transactionId));
+                        Map.of("type", "WITHDRAWAL".equals(purpose) ? "WITHDRAWAL_OTP_DEMO" : "TRANSFER_OTP_DEMO", "transactionId", transactionId));
                 delivered = true;
             } catch (InvalidFcmTokenException ex) {
                 deviceService.disableInvalidToken(device.fcmToken);
