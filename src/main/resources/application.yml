@@ -61,6 +61,8 @@ logging:
     org.springframework.web: ${WEB_LOG_LEVEL:INFO}
     org.springframework.security: ${SECURITY_LOG_LEVEL:DEBUG}
 app:
+  smart-otp:
+    signed-enrollment-enabled: ${SMART_OTP_SIGNED_ENROLLMENT_ENABLED:false}
   auth:
     firebase:
       # Firebase Phone Auth ID tokens are verified against this exact project.
