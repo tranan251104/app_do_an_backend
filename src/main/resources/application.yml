@@ -62,6 +62,7 @@ logging:
     org.springframework.security: ${SECURITY_LOG_LEVEL:DEBUG}
 app:
   smart-otp:
+    # Phone-only accounts use a signed challenge by default. This flag extends it to email accounts for demos.
     signed-enrollment-enabled: ${SMART_OTP_SIGNED_ENROLLMENT_ENABLED:false}
   auth:
     firebase:

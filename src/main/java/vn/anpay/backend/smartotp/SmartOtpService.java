@@ -13,7 +13,6 @@ import vn.anpay.backend.otp.service.OtpService;
 import vn.anpay.backend.otp.service.OtpAttemptException;
 import vn.anpay.backend.outbox.service.OtpDeliveryService;
 import vn.anpay.backend.outbox.service.OutboxService;
-import vn.anpay.backend.notification.repository.PushDeviceRepository;
 import vn.anpay.backend.user.entity.User;
 import vn.anpay.backend.user.repository.UserRepository;
 import vn.anpay.backend.wallet.repository.WalletRepository;
@@ -37,8 +36,6 @@ public class SmartOtpService {
     private final OtpRepository otpRepo;
     private final OtpDeliveryService delivery;
     private final OutboxService outbox;
-    private final PushDeviceRepository pushDevices;
-    private final boolean fcmEnabled;
     private final boolean signedEnrollmentEnabled;
     private final ObjectMapper mapper;
     private final SecureRandom random = new SecureRandom();
@@ -46,13 +43,11 @@ public class SmartOtpService {
     public SmartOtpService(SmartOtpDeviceRepository devices, SmartOtpChallengeRepository challenges,
             LedgerTransactionRepository transactions, WalletRepository wallets, UserRepository users,
             OtpService otp, OtpRepository otpRepo, OtpDeliveryService delivery, OutboxService outbox,
-            PushDeviceRepository pushDevices, @Value("${app.push.fcm.enabled:false}") boolean fcmEnabled,
             @Value("${app.smart-otp.signed-enrollment-enabled:false}") boolean signedEnrollmentEnabled,
             ObjectMapper mapper) {
         this.devices=devices; this.challenges=challenges; this.transactions=transactions;
         this.wallets=wallets; this.users=users; this.otp=otp; this.otpRepo=otpRepo;
-        this.delivery=delivery; this.outbox=outbox; this.pushDevices=pushDevices;
-        this.fcmEnabled=fcmEnabled; this.mapper=mapper;
+        this.delivery=delivery; this.outbox=outbox; this.mapper=mapper;
         this.signedEnrollmentEnabled = signedEnrollmentEnabled;
     }
 
@@ -64,31 +59,29 @@ public class SmartOtpService {
 
     @Transactional(readOnly=true)
     public Status status(UUID userId) {
-        var active=devices.findFirstByUserIdAndStatusOrderByActivatedAtDesc(userId,"ACTIVE");
-        return new Status(active.isPresent(), active.map(d->d.id).orElse(null),
-                signedEnrollmentEnabled ? SIGNED_ENROLLMENT_CHANNEL : "EMAIL_OR_FCM_DEMO");
+        var user = users.findById(userId).orElseThrow(() -> fail("USER_NOT_FOUND", "Không tìm thấy tài khoản"));
+        return status(user);
     }
 
-    // Enrollment requires an independently delivered OTP (email, or FCM demo on a phone-only account).
+    private Status status(User user) {
+        var active=devices.findFirstByUserIdAndStatusOrderByActivatedAtDesc(user.id,"ACTIVE");
+        return new Status(active.isPresent(), active.map(d->d.id).orElse(null),
+                usesSignedEnrollment(user) ? SIGNED_ENROLLMENT_CHANNEL : "EMAIL");
+    }
+
     @Transactional
     public Enrollment startEnrollment(UUID userId, String key) {
         validatePublicKey(key);
         var user = lockActiveUser(userId);
         requireNoActiveDevice(userId);
+        if (isPhoneOnly(user)) {
+            throw fail("SMART_OTP_ENROLL_MODE_INVALID", "Tài khoản số điện thoại cần kích hoạt Smart OTP bằng thử thách trên ứng dụng");
+        }
+        if (!hasEmail(user)) {
+            throw fail("SMART_OTP_CHANNEL_REQUIRED", "Tài khoản chưa có phương thức nhận OTP");
+        }
         for(var old: devices.findByUserIdAndStatus(userId,"PENDING")) {
             if(old.enrollmentExpiresAt.isAfter(Instant.now())) throw fail("SMART_OTP_ENROLL_PENDING","Đã có yêu cầu kích hoạt đang chờ OTP");
-        }
-        // Enrollment has its own OTP delivery policy: do not depend on the
-        // legacy TRANSFER_DEMO_PHONE_OTP_ENABLED switch (transaction OTPs are
-        // replaced by transaction-bound Smart OTP signatures).
-        var channel = (user.email!=null && !user.email.isBlank()) ? "EMAIL" : "FCM_DEMO";
-        if ("FCM_DEMO".equals(channel)) {
-            if (user.phone==null || user.phone.isBlank())
-                throw fail("SMART_OTP_CHANNEL_REQUIRED","Tài khoản chưa có phương thức nhận OTP");
-            if (!fcmEnabled)
-                throw fail("SMART_OTP_FCM_DISABLED","Cần bật FCM để xác minh kích hoạt Smart OTP demo");
-            if (pushDevices.findByUserIdAndEnabledTrue(userId).isEmpty())
-                throw fail("OTP_FCM_DEVICE_REQUIRED","Cần đăng ký thiết bị nhận OTP kích hoạt Smart OTP");
         }
         var d = pendingDevice(userId, key, Instant.now());
         var issued=otp.issue(userId,"SMART_OTP_ACTIVATE",d.id);
@@ -96,43 +89,37 @@ public class SmartOtpService {
         devices.save(d);
         delivery.stage(issued.challenge().id, issued.plaintextCode());
         try {
-            if("EMAIL".equals(channel)) {
-                outbox.add("SMART_OTP",d.id,"SEND_OTP_EMAIL",mapper.writeValueAsString(Map.of(
-                    "challengeId",issued.challenge().id.toString(),"email",user.email,"purpose","SMART_OTP_ACTIVATE")));
-            } else {
-                outbox.add("SMART_OTP",d.id,"SEND_OTP_FCM_DEMO",mapper.writeValueAsString(Map.of(
-                    "challengeId",issued.challenge().id.toString(),"userId",userId.toString(),
-                    "transactionId",d.id.toString(),"purpose","SMART_OTP_ACTIVATE")));
-            }
+            outbox.add("SMART_OTP",d.id,"SEND_OTP_EMAIL",mapper.writeValueAsString(Map.of(
+                "challengeId",issued.challenge().id.toString(),"email",user.email,"purpose","SMART_OTP_ACTIVATE")));
         } catch(Exception ex) { throw new IllegalStateException("Failed to enqueue enrollment verification",ex); }
-        return new Enrollment(d.id,channel,d.enrollmentExpiresAt);
+        return new Enrollment(d.id,"EMAIL",d.enrollmentExpiresAt);
     }
 
     @Transactional(noRollbackFor=OtpAttemptException.class)
     public Status confirmEnrollment(UUID userId, UUID deviceId, String code) {
-        lockActiveUser(userId);
+        var user = lockActiveUser(userId);
         var d=devices.findByIdAndUserId(deviceId,userId).orElseThrow(()->fail("SMART_OTP_DEVICE_NOT_FOUND","Không tìm thấy thiết bị"));
         if(!"PENDING".equals(d.status) || !d.enrollmentExpiresAt.isAfter(Instant.now()))
             throw fail("SMART_OTP_ENROLL_EXPIRED","Yêu cầu kích hoạt đã hết hạn");
         if (d.enrollmentOtpId == null) throw fail("SMART_OTP_ENROLL_MODE_INVALID", "Yêu cầu kích hoạt cần chữ ký thiết bị");
         var challenge=otpRepo.lockById(d.enrollmentOtpId).orElseThrow();
         otp.verifyLocked(challenge,"SMART_OTP_ACTIVATE",d.id,code);
-        return activate(d);
+        return activate(user, d);
     }
 
     @Transactional
     public SignedEnrollment startSignedEnrollment(UUID userId, String key) {
-        requireSignedEnrollmentEnabled();
         validatePublicKey(key);
-        lockActiveUser(userId);
+        var user = lockActiveUser(userId);
+        requireSignedEnrollmentEnabled(user);
         requireNoActiveDevice(userId);
         var now = Instant.now();
         for (var pending : devices.findByUserIdAndStatus(userId, "PENDING")) {
             if (!pending.enrollmentExpiresAt.isAfter(now)) continue;
-            if (pending.enrollmentOtpId != null) {
+            if (pending.enrollmentOtpId != null && !isPhoneOnly(user)) {
                 throw fail("SMART_OTP_ENROLL_PENDING", "Đã có yêu cầu kích hoạt đang chờ OTP");
             }
-            if (pending.publicKey.equals(key)) return signedEnrollment(pending);
+            if (pending.enrollmentOtpId == null && pending.publicKey.equals(key)) return signedEnrollment(pending);
             pending.status = "REVOKED";
             pending.revokedAt = now;
         }
@@ -141,8 +128,8 @@ public class SmartOtpService {
 
     @Transactional
     public Status confirmSignedEnrollment(UUID userId, UUID deviceId, String signature, String code) {
-        requireSignedEnrollmentEnabled();
-        lockActiveUser(userId);
+        var user = lockActiveUser(userId);
+        requireSignedEnrollmentEnabled(user);
         var device = devices.findByIdAndUserId(deviceId, userId)
                 .orElseThrow(() -> fail("SMART_OTP_DEVICE_NOT_FOUND", "Không tìm thấy thiết bị"));
         if (device.enrollmentOtpId != null) {
@@ -156,15 +143,27 @@ public class SmartOtpService {
                 || !codeFromSignature(signature).equals(code)) {
             throw fail("SMART_OTP_INVALID", "Chữ ký kích hoạt Smart OTP không hợp lệ");
         }
-        if ("ACTIVE".equals(device.status)) return status(userId);
+        if ("ACTIVE".equals(device.status)) return status(user);
         requireNoActiveDevice(userId);
-        return activate(device);
+        return activate(user, device);
     }
 
-    private void requireSignedEnrollmentEnabled() {
-        if (!signedEnrollmentEnabled) {
+    private void requireSignedEnrollmentEnabled(User user) {
+        if (!usesSignedEnrollment(user)) {
             throw fail("SMART_OTP_ENROLL_MODE_DISABLED", "Kích hoạt bằng chữ ký chỉ dùng cho bản mô phỏng");
         }
+    }
+
+    private boolean usesSignedEnrollment(User user) {
+        return signedEnrollmentEnabled || isPhoneOnly(user);
+    }
+
+    private boolean isPhoneOnly(User user) {
+        return !hasEmail(user) && user.phone != null && !user.phone.isBlank();
+    }
+
+    private boolean hasEmail(User user) {
+        return user.email != null && !user.email.isBlank();
     }
 
     private User lockActiveUser(UUID userId) {
@@ -198,11 +197,11 @@ public class SmartOtpService {
         return "ANPAY-SMARTOTP-ENROLL-V1\n" + device.userId + "\n" + device.id + "\n" + device.publicKey;
     }
 
-    private Status activate(SmartOtpDevice device) {
+    private Status activate(User user, SmartOtpDevice device) {
         device.status = "ACTIVE";
         device.activatedAt = Instant.now();
         devices.save(device);
-        return status(device.userId);
+        return status(user);
     }
 
     @Transactional
