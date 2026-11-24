@@ -8,3 +8,4 @@ src/main/resources/application-local.yml
 /src/test/**
 !/src/test/**/
 !/src/test/java/vn/anpay/backend/ai/**
+!/src/test/java/vn/anpay/backend/luckymoney/**
