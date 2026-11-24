@@ -13,6 +13,8 @@ import vn.anpay.backend.ledger.repository.*;
 import vn.anpay.backend.notification.entity.Notification;
 import vn.anpay.backend.notification.repository.NotificationRepository;
 import vn.anpay.backend.notification.service.NotificationPushQueue;
+import vn.anpay.backend.smartotp.SmartOtpService;
+import vn.anpay.backend.smartotp.SmartOtpBadSignatureException;
 import vn.anpay.backend.otp.repository.OtpRepository;
 import vn.anpay.backend.otp.service.*;
 import vn.anpay.backend.outbox.service.OtpDeliveryService;
@@ -53,6 +55,7 @@ public class WithdrawalService {
     private final LedgerAccountRepository accounts;
     private final LedgerEntryRepository entries;
     private final TransferRequestRepository requests;
+    private final SmartOtpService smart;
     private final OtpService otp;
     private final OtpRepository otpRepo;
     private final OtpRateLimitService rateLimit;
@@ -77,7 +80,7 @@ public class WithdrawalService {
             OtpDeliveryService otpDelivery, InternalTransferOtpDispatcher otpDispatcher,
             OutboxService outbox, NotificationRepository notifications,
             NotificationPushQueue pushQueue, TransferIdempotencyLock idemLock,
-            PayoutProvider payout, ObjectMapper mapper,
+            PayoutProvider payout, ObjectMapper mapper, SmartOtpService smart,
             @Value("${app.withdrawal.min:10000}") long min,
             @Value("${app.withdrawal.max:50000000}") long max,
             @Value("${app.withdrawal.demo-enabled:false}") boolean demoEnabled
@@ -89,6 +92,7 @@ public class WithdrawalService {
         this.accounts = accounts;
         this.entries = entries;
         this.requests = requests;
+        this.smart = smart;
         this.otp = otp;
         this.otpRepo = otpRepo;
         this.rateLimit = rateLimit;
@@ -126,14 +130,14 @@ public class WithdrawalService {
             throw bad("WITHDRAWAL_AMOUNT_INVALID", "Số tiền rút ngoài hạn mức");
         }
         var bank = linkedBanks.ownedActive(userId, request.linkedBankAccountId());
-        var channel = otpDispatcher.channelFor(userId);
+        smart.requireActiveDevice(userId);
         var wallet = wallets.findByUserId(userId)
                 .orElseThrow(() -> bad("WALLET_NOT_FOUND", "Không tìm thấy ví"));
         if (!"ACTIVE".equals(wallet.status)) throw bad("WALLET_UNAVAILABLE", "Ví không khả dụng");
         if (wallet.availableBalance < request.amount()) throw bad("INSUFFICIENT_BALANCE", "Số dư không đủ");
 
         var tx = LedgerTransaction.create(TYPE, request.amount());
-        tx.status = "OTP_REQUIRED";
+        tx.status = "AUTH_REQUIRED";
         tx.senderWalletId = wallet.id;
         tx.provider = PROVIDER;
         tx.description = "Rút tiền mô phỏng về " + bank.bankName + " " + LinkedBankAccountService.mask(bank.accountNumber);
@@ -142,11 +146,10 @@ public class WithdrawalService {
                     Math.min(500, (tx.description + " | " + request.note().trim()).length()));
         }
         tx.metadata = metadata(bank.id, bank.bankBin, bank.bankName, bank.accountNumber,
-                bank.accountName, channel.name());
+                bank.accountName, "SMART_OTP");
         txs.save(tx);
 
-        var issued = otp.issue(userId, PURPOSE, tx.id);
-        otpDelivery.stage(issued.challenge().id, issued.plaintextCode());
+        var expiresAt=smart.issue(userId,tx);
         var transfer = new TransferRequest();
         transfer.id = UUID.randomUUID();
         transfer.userId = userId;
@@ -155,50 +158,33 @@ public class WithdrawalService {
         transfer.recipientReference = bank.id.toString();
         transfer.note = clean(request.note());
         transfer.idempotencyKey = key;
-        transfer.otpChallengeId = issued.challenge().id;
-        transfer.expiresAt = issued.challenge().expiresAt;
+        transfer.otpChallengeId = null;
+        transfer.expiresAt = expiresAt;
         transfer.createdAt = Instant.now();
         requests.save(transfer);
-        queueOtp(userId, tx, issued.challenge().id, channel, bank.bankName, bank.accountNumber);
-        log.info("[WITHDRAWAL_PREPARED] userId={} txId={} amount={} channel={}", userId, tx.id, tx.amount, channel);
+        log.info("[WITHDRAWAL_PREPARED] userId={} txId={} amount={} smartOtp=true",userId,tx.id,tx.amount);
         return response(transfer, tx);
     }
 
     @Transactional
     public WithdrawalResponse resend(UUID userId, UUID txId) {
         ensureEnabled();
-        var tx = txs.lockById(txId).orElseThrow(() -> bad("WITHDRAWAL_NOT_FOUND", "Không tìm thấy giao dịch rút tiền"));
-        var request = ownedRequest(userId, txId);
-        if (!"OTP_REQUIRED".equals(tx.status)) throw bad("WITHDRAWAL_STATE_INVALID", "Giao dịch không chờ OTP");
-        linkedBanks.ownedActive(userId, UUID.fromString(request.recipientReference));
-        var info = readMetadata(tx);
-        var channel = metadataChannel(info);
-        if (channel != otpDispatcher.channelFor(userId)) {
-            throw bad("OTP_CHANNEL_CHANGED", "Phương thức OTP đã thay đổi; vui lòng tạo giao dịch mới");
-        }
-        var previous = otpRepo.lockById(request.otpChallengeId).orElseThrow();
-        if (previous.resendAvailableAt.isAfter(Instant.now())) {
-            throw new BusinessException("OTP_RESEND_TOO_SOON", "Vui lòng chờ trước khi gửi lại OTP", HttpStatus.TOO_MANY_REQUESTS);
-        }
-        rateLimit.registerResend(tx.id);
-        previous.consumedAt = Instant.now();
-        otpRepo.save(previous);
-        var issued = otp.issue(userId, PURPOSE, tx.id);
-        otpDelivery.stage(issued.challenge().id, issued.plaintextCode());
-        request.otpChallengeId = issued.challenge().id;
-        request.expiresAt = issued.challenge().expiresAt;
-        requests.save(request);
-        queueOtp(userId, tx, issued.challenge().id, channel, value(info, "bankName"), value(info, "accountNumber"));
-        return response(request, tx);
+        var tx=txs.lockById(txId).orElseThrow(()->bad("WITHDRAWAL_NOT_FOUND","Không tìm thấy giao dịch"));
+        var tr=ownedRequest(userId,txId);
+        if(!"AUTH_REQUIRED".equals(tx.status)) throw bad("WITHDRAWAL_STATE_INVALID","Giao dịch không chờ Smart OTP");
+        linkedBanks.ownedActive(userId,UUID.fromString(tr.recipientReference));
+        tr.expiresAt=smart.renew(userId,tx);
+        requests.save(tr);
+        return response(tr,tx);
     }
 
-    @Transactional(noRollbackFor = OtpAttemptException.class)
-    public WithdrawalResponse confirm(UUID userId, UUID txId, String code) {
+    @Transactional(noRollbackFor = SmartOtpBadSignatureException.class)
+    public WithdrawalResponse confirm(UUID userId, UUID txId, UUID deviceId, String signature, String smartOtpCode) {
         ensureEnabled();
         var tx = txs.lockById(txId).orElseThrow(() -> bad("WITHDRAWAL_NOT_FOUND", "Không tìm thấy giao dịch rút tiền"));
         var request = ownedRequest(userId, txId);
         if ("COMPLETED".equals(tx.status) || "FAILED".equals(tx.status)) return response(request, tx);
-        if (!"OTP_REQUIRED".equals(tx.status)) throw bad("WITHDRAWAL_STATE_INVALID", "Giao dịch không chờ OTP");
+        if (!"AUTH_REQUIRED".equals(tx.status)) throw bad("WITHDRAWAL_STATE_INVALID", "Giao dịch không chờ Smart OTP");
 
         // Lock the source wallet and validate again, after OTP and before any debit.
         var wallet = wallets.lockById(tx.senderWalletId).orElseThrow();
@@ -206,9 +192,7 @@ public class WithdrawalService {
             throw bad("WALLET_UNAVAILABLE", "Ví không khả dụng");
         }
         var bank = linkedBanks.ownedActive(userId, UUID.fromString(request.recipientReference));
-        var challenge = otpRepo.lockById(request.otpChallengeId).orElseThrow();
-        otp.verifyLocked(challenge, PURPOSE, tx.id, code);
-        rateLimit.clear(tx.id);
+        smart.verifyAndConsume(userId,tx,deviceId,signature,smartOtpCode);
         if (wallet.availableBalance < tx.amount) throw bad("INSUFFICIENT_BALANCE", "Số dư không đủ");
 
         // This is an in-process fake provider. Never reuse its synchronous behavior
@@ -259,12 +243,9 @@ public class WithdrawalService {
                 .orElseThrow(() -> bad("WITHDRAWAL_NOT_FOUND", "Không tìm thấy giao dịch rút tiền"));
         var request = ownedRequest(userId, txId);
         if ("CANCELLED".equals(tx.status)) return response(request, tx);
-        if (!"OTP_REQUIRED".equals(tx.status)) {
+        if (!"AUTH_REQUIRED".equals(tx.status)) {
             throw bad("WITHDRAWAL_STATE_INVALID", "Không thể hủy giao dịch đã xử lý");
         }
-        var challenge = otpRepo.lockById(request.otpChallengeId).orElseThrow();
-        challenge.consumedAt = Instant.now();
-        otpRepo.save(challenge);
         tx.status = "CANCELLED";
         tx.updatedAt = Instant.now();
         txs.save(tx);
@@ -313,8 +294,8 @@ public class WithdrawalService {
         return new WithdrawalResponse(tx.id, tx.reference, tx.amount, tx.status,
                 UUID.fromString(request.recipientReference), value(info, "bankBin"),
                 value(info, "bankName"), LinkedBankAccountService.mask(value(info, "accountNumber")),
-                value(info, "accountName"), true, "OTP_REQUIRED".equals(tx.status),
-                metadataChannel(info).name(), request.expiresAt, tx.providerReference);
+                value(info, "accountName"), true, "AUTH_REQUIRED".equals(tx.status),
+                "SMART_OTP", request.expiresAt, tx.providerReference);
     }
 
     private InternalTransferOtpDispatcher.Channel metadataChannel(Map<String, Object> info) {

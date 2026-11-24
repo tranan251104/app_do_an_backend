@@ -17,6 +17,8 @@ import vn.anpay.backend.ledger.repository.LedgerTransactionRepository;
 import vn.anpay.backend.notification.entity.Notification;
 import vn.anpay.backend.notification.repository.NotificationRepository;
 import vn.anpay.backend.notification.service.NotificationPushQueue;
+import vn.anpay.backend.smartotp.SmartOtpService;
+import vn.anpay.backend.smartotp.SmartOtpBadSignatureException;
 import vn.anpay.backend.otp.repository.OtpRepository;
 import vn.anpay.backend.otp.service.OtpService;
 import vn.anpay.backend.otp.service.OtpAttemptException;
@@ -50,6 +52,7 @@ public class ExternalTransferService {
     private final LedgerTransactionRepository txs;
     private final LedgerEntryRepository entries;
     private final TransferRequestRepository requests;
+    private final SmartOtpService smart;
     private final OtpRepository otpRepo;
     private final OtpService otp;
     private final OtpRateLimitService otpRateLimit;
@@ -82,7 +85,7 @@ public class ExternalTransferService {
             PayoutProvider payout,
             ObjectMapper mapper,
             TransferIdempotencyLock idempotencyLock,
-            InternalTransferOtpDispatcher otpDispatcher,
+            InternalTransferOtpDispatcher otpDispatcher, SmartOtpService smart,
             @Value("${app.money.transfer-min}") long min,
             @Value("${app.money.transfer-max}") long max,
             @Value("${app.mock-external-transfer.enabled:true}") boolean enabled
@@ -93,6 +96,7 @@ public class ExternalTransferService {
         this.txs = txs;
         this.entries = entries;
         this.requests = requests;
+        this.smart = smart;
         this.otpRepo = otpRepo;
         this.otp = otp;
         this.otpRateLimit = otpRateLimit;
@@ -144,7 +148,7 @@ public class ExternalTransferService {
 
         // Both email and phone-only accounts can initiate mock bank transfers.
         // A phone-only account requires explicitly enabled FCM demo OTP.
-        var otpChannel = otpDispatcher.channelFor(userId);
+        smart.requireActiveDevice(userId);
 
         var sender = wallets.findByUserId(userId)
                 .orElseThrow(() -> new BusinessException("WALLET_NOT_FOUND", "Không tìm thấy ví", HttpStatus.NOT_FOUND));
@@ -157,16 +161,15 @@ public class ExternalTransferService {
         }
 
         var tx = LedgerTransaction.create("EXTERNAL_BANK_TRANSFER", request.amount());
-        tx.status = "OTP_REQUIRED";
+        tx.status = "AUTH_REQUIRED";
         tx.senderWalletId = sender.id;
         tx.receiverWalletId = null;
         tx.provider = PROVIDER;
         tx.description = buildDescription(request);
-        tx.metadata = metadata(request, otpChannel);
+        tx.metadata = metadata(request, "SMART_OTP");
         txs.save(tx);
 
-        var issued = otp.issue(userId, PURPOSE, tx.id);
-        delivery.stage(issued.challenge().id, issued.plaintextCode());
+        var expiresAt = smart.issue(userId, tx);
 
         var transfer = new TransferRequest();
         transfer.id = UUID.randomUUID();
@@ -176,18 +179,12 @@ public class ExternalTransferService {
         transfer.recipientReference = request.bankBin().trim() + ":" + request.accountNumber().trim();
         transfer.note = request.note();
         transfer.idempotencyKey = idempotencyKey;
-        transfer.otpChallengeId = issued.challenge().id;
-        transfer.expiresAt = issued.challenge().expiresAt;
+        transfer.otpChallengeId = null;
+        transfer.expiresAt = expiresAt;
         transfer.createdAt = Instant.now();
         requests.save(transfer);
 
-        enqueueOtp(userId, otpChannel, tx, issued.challenge().id,
-                request.bankName(), request.accountNumber());
-
-        log.info(
-                "MOCK EXTERNAL TRANSFER prepared userId={} txId={} bankBin={} account={} amount={} otpChannel={}",
-                userId, tx.id, request.bankBin(), maskAccount(request.accountNumber()), request.amount(), otpChannel
-        );
+        log.info("MOCK EXTERNAL TRANSFER prepared with Smart OTP userId={} txId={}",userId,tx.id);
 
         return response(transfer);
     }
@@ -195,55 +192,16 @@ public class ExternalTransferService {
     @Transactional
     public ExternalTransferResponse resend(UUID userId, UUID txId) {
         ensureEnabled();
-
-        var tx = txs.lockById(txId).orElseThrow(() -> bad("TRANSFER_NOT_FOUND", "Không tìm thấy giao dịch"));
-        var transfer = bankTransfer(txId);
-        requireSender(transfer, userId);
-        if (!"OTP_REQUIRED".equals(tx.status)) {
-            throw bad("TRANSFER_STATE_INVALID", "Giao dịch không còn chờ OTP");
-        }
-
-        // A pending transfer keeps the delivery channel chosen at prepare.
-        // For legacy transactions without metadata, the channel was email-only.
-        var info = readMetadata(tx);
-        var originalChannel = channelFromMetadata(info);
-        var currentChannel = otpDispatcher.channelFor(userId);
-        if (originalChannel != currentChannel) {
-            throw bad("OTP_CHANNEL_CHANGED", "Phương thức nhận OTP đã thay đổi; vui lòng tạo giao dịch mới");
-        }
-        var old = otpRepo.lockById(transfer.otpChallengeId).orElseThrow();
-        if (old.resendAvailableAt.isAfter(Instant.now())) {
-            throw new BusinessException(
-                    "OTP_RESEND_TOO_SOON",
-                    "Vui lòng chờ trước khi gửi lại OTP",
-                    HttpStatus.TOO_MANY_REQUESTS
-            );
-        }
-
-        int resendNumber = otpRateLimit.registerResend(txId);
-
-        old.consumedAt = Instant.now();
-        otpRepo.save(old);
-
-        var issued = otp.issue(userId, PURPOSE, tx.id);
-        transfer.otpChallengeId = issued.challenge().id;
-        transfer.expiresAt = issued.challenge().expiresAt;
-        requests.save(transfer);
-        delivery.stage(issued.challenge().id, issued.plaintextCode());
-
-        enqueueOtp(userId, originalChannel, tx, issued.challenge().id,
-                text(info, "bankName"), text(info, "accountNumber"));
-
-        log.info(
-                "[OTP_RESEND] External transfer OTP reissued userId={} txId={} resendNumber={} otpChannel={} expiresAt={}",
-                userId, txId, resendNumber, originalChannel, issued.challenge().expiresAt
-        );
-
-        return response(transfer);
+        var tx=txs.lockById(txId).orElseThrow(()->bad("TRANSFER_NOT_FOUND","Không tìm thấy giao dịch"));
+        var tr=bankTransfer(txId); requireSender(tr,userId);
+        if(!"AUTH_REQUIRED".equals(tx.status)) throw bad("TRANSFER_STATE_INVALID","Giao dịch không chờ Smart OTP");
+        tr.expiresAt=smart.renew(userId,tx);
+        requests.save(tr);
+        return response(tr);
     }
 
-    @Transactional(noRollbackFor = OtpAttemptException.class)
-    public ExternalTransferResponse confirm(UUID userId, UUID txId, String code) {
+    @Transactional(noRollbackFor = SmartOtpBadSignatureException.class)
+    public ExternalTransferResponse confirm(UUID userId, UUID txId, UUID deviceId, String signature, String smartOtpCode) {
         ensureEnabled();
 
         var tx = txs.lockById(txId).orElseThrow(() -> bad("TRANSFER_NOT_FOUND", "Không tìm thấy giao dịch"));
@@ -254,7 +212,7 @@ public class ExternalTransferService {
             return response(transfer);
         }
 
-        if (!"OTP_REQUIRED".equals(tx.status)) {
+        if (!"AUTH_REQUIRED".equals(tx.status)) {
             throw bad("TRANSFER_STATE_INVALID", "Trạng thái giao dịch không hợp lệ");
         }
 
@@ -263,9 +221,7 @@ public class ExternalTransferService {
             throw bad("WALLET_UNAVAILABLE", "Ví không khả dụng");
         }
 
-        var challenge = otpRepo.lockById(transfer.otpChallengeId).orElseThrow();
-        otp.verifyLocked(challenge, PURPOSE, tx.id, code);
-        otpRateLimit.clear(tx.id);
+        smart.verifyAndConsume(userId,tx,deviceId,signature,smartOtpCode);
 
         if (sender.availableBalance < tx.amount) {
             throw bad("INSUFFICIENT_BALANCE", "Số dư không đủ");
@@ -383,9 +339,9 @@ public class ExternalTransferService {
                 tx.provider,
                 tx.providerReference,
                 transfer.expiresAt,
-                "OTP_REQUIRED".equals(tx.status),
-                maskedEmailForTransaction(tx),
-                channelFromMetadata(info).name()
+                "AUTH_REQUIRED".equals(tx.status),
+                null,
+                "SMART_OTP"
         );
     }
 
@@ -481,11 +437,11 @@ public class ExternalTransferService {
         return String.format(Locale.US, "%,d", amount).replace(',', '.') + " VND";
     }
 
-    private String metadata(ExternalTransferPrepareRequest request, InternalTransferOtpDispatcher.Channel channel) {
+    private String metadata(ExternalTransferPrepareRequest request, String channel) {
         try {
             var value = new LinkedHashMap<String, Object>();
             value.put("simulation", true);
-            value.put("otpChannel", channel.name());
+            value.put("otpChannel", channel);
             value.put("bankBin", request.bankBin().trim());
             value.put("bankName", request.bankName().trim());
             value.put("accountNumber", request.accountNumber().trim());

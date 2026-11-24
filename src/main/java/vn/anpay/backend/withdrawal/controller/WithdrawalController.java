@@ -25,7 +25,7 @@ public class WithdrawalController {
     @PostMapping("/{id}/confirm")
     public ApiResponse<WithdrawalResponse> confirm(@PathVariable UUID id,
                                                    @Valid @RequestBody ConfirmTransferRequest request) {
-        return ApiResponse.ok(service.confirm(SecurityUtil.userId(), id, request.otp()));
+        return ApiResponse.ok(service.confirm(SecurityUtil.userId(), id, request.deviceId(),request.signature(),request.smartOtpCode()));
     }
 
     @PostMapping("/{id}/resend-otp")

@@ -11,6 +11,8 @@ import vn.anpay.backend.ledger.repository.*;
 import vn.anpay.backend.notification.entity.Notification;
 import vn.anpay.backend.notification.repository.NotificationRepository;
 import vn.anpay.backend.notification.service.NotificationPushQueue;
+import vn.anpay.backend.smartotp.SmartOtpService;
+import vn.anpay.backend.smartotp.SmartOtpBadSignatureException;
 import vn.anpay.backend.otp.repository.OtpRepository;
 import vn.anpay.backend.otp.service.OtpService;
 import vn.anpay.backend.otp.service.OtpAttemptException;
@@ -32,6 +34,7 @@ public class TransferService {
     private final LedgerTransactionRepository txs;
     private final LedgerEntryRepository entries;
     private final TransferRequestRepository requests;
+    private final SmartOtpService smart;
     private final OtpRepository otpRepo;
     private final OtpService otp;
     private final NotificationRepository notifications;
@@ -43,13 +46,14 @@ public class TransferService {
     private final TransferRecipientResolver recipients;
     private final InternalTransferOtpDispatcher otpDispatcher;
     private final long min,max;
-    public TransferService(WalletRepository w,UserRepository u,LedgerAccountRepository a,LedgerTransactionRepository t,LedgerEntryRepository e,TransferRequestRepository r,OtpRepository or,OtpService o,NotificationRepository n,NotificationPushQueue pushQueue,OutboxService out,OtpDeliveryService d,ObjectMapper mapper,TransferIdempotencyLock idempotencyLock,TransferRecipientResolver recipients,InternalTransferOtpDispatcher otpDispatcher,@Value("${app.money.transfer-min}")long min,@Value("${app.money.transfer-max}")long max) {
+    public TransferService(WalletRepository w,UserRepository u,LedgerAccountRepository a,LedgerTransactionRepository t,LedgerEntryRepository e,TransferRequestRepository r,OtpRepository or,OtpService o,NotificationRepository n,NotificationPushQueue pushQueue,OutboxService out,OtpDeliveryService d,ObjectMapper mapper,TransferIdempotencyLock idempotencyLock,TransferRecipientResolver recipients,InternalTransferOtpDispatcher otpDispatcher,SmartOtpService smart,@Value("${app.money.transfer-min}")long min,@Value("${app.money.transfer-max}")long max) {
         wallets=w;
         users=u;
         accounts=a;
         txs=t;
         entries=e;
         requests=r;
+        this.smart=smart;
         otpRepo=or;
         otp=o;
         notifications=n;
@@ -87,15 +91,14 @@ public class TransferService {
         if(sender.id.equals(receiver.id))throw bad("SELF_TRANSFER","Không thể chuyển tiền cho chính mình");
         if(!"ACTIVE".equals(sender.status)||!"ACTIVE".equals(receiver.status))throw bad("WALLET_UNAVAILABLE","Ví không khả dụng");
         if(sender.availableBalance<r.amount())throw bad("INSUFFICIENT_BALANCE","Số dư không đủ");
-        var otpChannel=otpDispatcher.channelFor(userId);
+        smart.requireActiveDevice(userId);
         var tx=LedgerTransaction.create("INTERNAL_TRANSFER",r.amount());
-        tx.status="OTP_REQUIRED";
+        tx.status="AUTH_REQUIRED";
         tx.senderWalletId=sender.id;
         tx.receiverWalletId=receiver.id;
         tx.description=r.note();
         txs.save(tx);
-        var issued=otp.issue(userId,"TRANSFER",tx.id);
-        delivery.stage(issued.challenge().id,issued.plaintextCode());
+        var expiresAt=smart.issue(userId,tx);
         var tr=new TransferRequest();
         tr.id=UUID.randomUUID();
         tr.transactionId=tx.id;
@@ -104,45 +107,35 @@ public class TransferService {
         tr.recipientReference=receiver.walletCode;
         tr.note=r.note();
         tr.idempotencyKey=idem;
-        tr.otpChallengeId=issued.challenge().id;
-        tr.expiresAt=issued.challenge().expiresAt;
+        tr.otpChallengeId=null;
+        tr.expiresAt=expiresAt;
         tr.createdAt=Instant.now();
         requests.save(tr);
-        otpDispatcher.enqueue(userId, tx.id, issued.challenge().id, otpChannel);
+
         return response(tr);
 
     }
     @Transactional
-    public TransferResponse resend(UUID userId,UUID txId) {
+    public TransferResponse resend(UUID userId, UUID txId) {
         var tx=txs.lockById(txId).orElseThrow(()->bad("TRANSFER_NOT_FOUND","Không tìm thấy giao dịch"));
         var tr=internalTransfer(txId);
         requireSender(tr,userId);
-        if(!"OTP_REQUIRED".equals(tx.status))throw bad("TRANSFER_STATE_INVALID","Giao dịch không còn chờ OTP");
-        var otpChannel=otpDispatcher.channelFor(userId);
-        var old=otpRepo.lockById(tr.otpChallengeId).orElseThrow();
-        if(old.resendAvailableAt.isAfter(Instant.now()))throw new BusinessException("OTP_RESEND_TOO_SOON","Vui lòng chờ trước khi gửi lại OTP",HttpStatus.TOO_MANY_REQUESTS);
-        old.consumedAt=Instant.now();
-        otpRepo.save(old);
-        var issued=otp.issue(userId,"TRANSFER",tx.id);
-        tr.otpChallengeId=issued.challenge().id;
-        tr.expiresAt=issued.challenge().expiresAt;
+        if(!"AUTH_REQUIRED".equals(tx.status)) throw bad("TRANSFER_STATE_INVALID","Giao dịch không chờ Smart OTP");
+        tr.expiresAt=smart.renew(userId,tx);
         requests.save(tr);
-        delivery.stage(issued.challenge().id,issued.plaintextCode());
-        otpDispatcher.enqueue(userId, tx.id, issued.challenge().id, otpChannel);
         return response(tr);
-
     }
     // A wrong code only changes attemptCount. All later failures still roll back
     // OTP consumption, balances, ledger entries and notifications together.
-    @Transactional(noRollbackFor = OtpAttemptException.class)
-    public TransferResponse confirm(UUID userId,UUID txId,String code) {
+    @Transactional(noRollbackFor = SmartOtpBadSignatureException.class)
+    public TransferResponse confirm(UUID userId,UUID txId,UUID deviceId,String signature,String smartOtpCode) {
         // Read the transaction under lock first so concurrent confirms/resends
         // cannot use an old status or an obsolete OTP challenge from the JPA cache.
         var tx=txs.lockById(txId).orElseThrow(()->bad("TRANSFER_NOT_FOUND","Không tìm thấy giao dịch"));
         var tr=internalTransfer(txId);
         requireSender(tr,userId);
         if("COMPLETED".equals(tx.status))return response(tr);
-        if(!"OTP_REQUIRED".equals(tx.status))throw bad("TRANSFER_STATE_INVALID","Trạng thái giao dịch không hợp lệ");
+        if(!"AUTH_REQUIRED".equals(tx.status))throw bad("TRANSFER_STATE_INVALID","Trạng thái giao dịch không hợp lệ");
         UUID first=tx.senderWalletId.compareTo(tx.receiverWalletId)<0?tx.senderWalletId:tx.receiverWalletId;
         UUID second=first.equals(tx.senderWalletId)?tx.receiverWalletId:tx.senderWalletId;
         Wallet w1=wallets.lockById(first).orElseThrow();
@@ -150,8 +143,7 @@ public class TransferService {
         Wallet sender=w1.id.equals(tx.senderWalletId)?w1:w2;
         Wallet receiver=w1.id.equals(tx.receiverWalletId)?w1:w2;
         if(!"ACTIVE".equals(sender.status)||!"ACTIVE".equals(receiver.status))throw bad("WALLET_UNAVAILABLE","Ví không khả dụng");
-        var challenge=otpRepo.lockById(tr.otpChallengeId).orElseThrow();
-        otp.verifyLocked(challenge,"TRANSFER",tx.id,code);
+        smart.verifyAndConsume(userId,tx,deviceId,signature,smartOtpCode);
         if(sender.availableBalance<tx.amount)throw bad("INSUFFICIENT_BALANCE","Số dư không đủ");
         sender.availableBalance-=tx.amount;
         receiver.availableBalance+=tx.amount;
@@ -213,8 +205,8 @@ public class TransferService {
         var rw=wallets.findById(tx.receiverWalletId).orElseThrow();
         var ru=users.findById(rw.userId).orElseThrow();
         var su=users.findById(tr.userId).orElse(null);
-        String otpChannel=(su!=null&&su.email!=null&&!su.email.isBlank())?"EMAIL":"FCM_DEMO";
-        return new TransferResponse(tx.id,tx.reference,tx.amount,tx.status,rw.walletCode,mask(ru.fullName),tr.expiresAt,"OTP_REQUIRED".equals(tx.status),otpChannel);
+        String otpChannel="SMART_OTP";
+        return new TransferResponse(tx.id,tx.reference,tx.amount,tx.status,rw.walletCode,mask(ru.fullName),tr.expiresAt,"AUTH_REQUIRED".equals(tx.status),otpChannel);
 
     }
     private TransferRequest internalTransfer(UUID txId) {

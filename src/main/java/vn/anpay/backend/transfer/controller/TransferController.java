@@ -23,7 +23,7 @@ import java.util.UUID;
 
     }
     @PostMapping("/{id}/confirm")ApiResponse<TransferResponse> confirm(@PathVariable UUID id,@Valid @RequestBody ConfirmTransferRequest r) {
-        return ApiResponse.ok(s.confirm(SecurityUtil.userId(),id,r.otp()));
+        return ApiResponse.ok(s.confirm(SecurityUtil.userId(),id,r.deviceId(),r.signature(),r.smartOtpCode()));
 
     }
     @GetMapping("/{id}")ApiResponse<TransferResponse> get(@PathVariable UUID id) {
