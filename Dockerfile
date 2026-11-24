@@ -1,13 +1,25 @@
 # Stage 1: Build the application
-FROM maven:3.9.11-eclipse-temurin-21 AS build
+FROM eclipse-temurin:21-jdk-jammy AS build
 WORKDIR /app
 
-COPY pom.xml ./
+# Install unzip needed for maven wrapper
+RUN apt-get update && apt-get install -y unzip
+
+# Copy maven wrapper and pom.xml
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+
+# Make maven wrapper executable
+RUN chmod +x mvnw
+
+# Download dependencies (this step is cached if pom.xml doesn't change)
+RUN ./mvnw dependency:go-offline
+
+# Copy source code
 COPY src ./src
 
-# Reuse downloaded Maven artifacts when the build cache is available.
-RUN --mount=type=cache,target=/root/.m2/repository,sharing=locked \
-    mvn -B clean package -DskipTests
+# Build the application
+RUN ./mvnw clean package -DskipTests
 
 # Stage 2: Run the application
 FROM eclipse-temurin:21-jre-jammy
