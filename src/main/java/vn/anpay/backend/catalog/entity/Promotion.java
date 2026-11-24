@@ -16,6 +16,8 @@ import java.util.*;
     public boolean active;
     @Column(name="valid_from")public Instant validFrom;
     @Column(name="valid_until")public Instant validUntil;
+    @Column(name = "demo_benefit", length = 16)
+    public String demoBenefit;
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition="jsonb")
     public String metadata;

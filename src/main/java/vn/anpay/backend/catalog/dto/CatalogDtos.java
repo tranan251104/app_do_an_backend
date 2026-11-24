@@ -16,6 +16,11 @@ public final class CatalogDtos {
     public record Promo(UUID id,String code,String title,String description,String category,Instant validFrom,Instant validUntil) {
 
     }
+    public record CatalogPromotion(
+            UUID id, String code, String title, String description, String category,
+            Instant validFrom, Instant validUntil, String demoBenefit) {
+    }
+
     public record Partner(UUID id,String name,String webUrl,String androidDeepLink,String iosDeepLink,String fallbackUrl) {
 
     }

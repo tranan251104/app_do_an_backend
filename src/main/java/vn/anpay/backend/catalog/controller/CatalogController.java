@@ -6,6 +6,7 @@ import vn.anpay.backend.catalog.entity.*;
 import vn.anpay.backend.catalog.dto.CatalogDtos;
 import vn.anpay.backend.catalog.repository.*;
 import vn.anpay.backend.common.api.ApiResponse;
+import java.time.Instant;
 import java.util.*;
 
 @RestController @RequestMapping("/api/v1") public class CatalogController {
@@ -34,6 +35,18 @@ import java.util.*;
         return ApiResponse.ok(promos.findByActiveTrue().stream().map(x->new CatalogDtos.Promo(x.id,x.code,x.title,x.description,x.category,x.validFrom,x.validUntil)).toList());
 
     }
+
+    @GetMapping("/catalog/promotions")
+    ApiResponse<List<CatalogDtos.CatalogPromotion>> catalogPromotions() {
+        var promotions = promos.findAvailableAt(Instant.now()).stream()
+                .map(promotion -> new CatalogDtos.CatalogPromotion(
+                        promotion.id, promotion.code, promotion.title,
+                        promotion.description, promotion.category,
+                        promotion.validFrom, promotion.validUntil, promotion.demoBenefit))
+                .toList();
+        return ApiResponse.ok(promotions);
+    }
+
     @GetMapping("/partners")ApiResponse<List<CatalogDtos.Partner>> partners() {
         return ApiResponse.ok(partners.findByActiveTrue().stream().map(x->new CatalogDtos.Partner(x.id,x.name,x.webUrl,x.androidDeepLink,x.iosDeepLink,x.fallbackUrl)).toList());
 
