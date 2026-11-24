@@ -162,6 +162,10 @@ public class OutboxWorker {
         } else if ("EXTERNAL_TRANSFER".equals(purpose)) {
             subject = "AnPay - Mã OTP xác nhận chuyển tiền";
             text = externalTransferMessage(node, code);
+        } else if ("SMART_OTP_ACTIVATE".equals(purpose)) {
+            subject = "AnPay - Mã OTP kích hoạt Smart OTP";
+            text = "Mã xác thực kích hoạt Smart OTP AnPay: " + code + "\n\n"
+                    + "Mã có hiệu lực trong 5 phút. Không chia sẻ mã này với bất kỳ ai.";
         } else if ("PASSWORD_RESET".equals(purpose)) {
             subject = "AnPay - Mã OTP đặt lại mật khẩu";
             text = "Mã OTP AnPay của bạn là: " + code + "\n\n"

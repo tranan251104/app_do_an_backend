@@ -35,7 +35,7 @@ public class LuckyMoneyController {
     @PostMapping("/{id}/confirm")
     public ApiResponse<LuckyMoneyService.View> confirm(@PathVariable UUID id,
                                                      @Valid @RequestBody ConfirmTransferRequest body) {
-        return ApiResponse.ok(service.confirm(SecurityUtil.userId(),id,body.otp()));
+        return ApiResponse.ok(service.confirm(SecurityUtil.userId(),id,body.deviceId(),body.signature(),body.smartOtpCode()));
     }
     @PostMapping("/{id}/resend-otp")
     public ApiResponse<LuckyMoneyService.View> resend(@PathVariable UUID id) {

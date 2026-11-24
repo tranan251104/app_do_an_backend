@@ -12,6 +12,8 @@ import vn.anpay.backend.ledger.repository.*;
 import vn.anpay.backend.notification.entity.Notification;
 import vn.anpay.backend.notification.repository.NotificationRepository;
 import vn.anpay.backend.notification.service.NotificationPushQueue;
+import vn.anpay.backend.smartotp.SmartOtpService;
+import vn.anpay.backend.smartotp.SmartOtpBadSignatureException;
 import vn.anpay.backend.otp.repository.OtpRepository;
 import vn.anpay.backend.otp.service.*;
 import vn.anpay.backend.outbox.service.*;
@@ -30,6 +32,7 @@ public class LuckyMoneyService {
     private final UserRepository users;
     private final LedgerAccountRepository accounts;
     private final LedgerEntryRepository entries;
+    private final SmartOtpService smart;
     private final OtpRepository challenges;
     private final OtpService otp;
     private final OtpDeliveryService delivery;
@@ -44,10 +47,11 @@ public class LuckyMoneyService {
             WalletRepository wallets, UserRepository users, LedgerAccountRepository accounts,
             LedgerEntryRepository entries, OtpRepository challenges, OtpService otp,
             OtpDeliveryService delivery, OutboxService outbox, NotificationRepository notifications,
-            NotificationPushQueue push, TransferIdempotencyLock keys, ObjectMapper mapper,
+            NotificationPushQueue push, TransferIdempotencyLock keys, ObjectMapper mapper, SmartOtpService smart,
             @Value("${app.money.transfer-min:10000}") long min,
             @Value("${app.money.transfer-max:50000000}") long max) {
         this.envelopes=envelopes; this.txs=txs; this.wallets=wallets; this.users=users;
+        this.smart=smart;
         this.accounts=accounts; this.entries=entries; this.challenges=challenges; this.otp=otp;
         this.delivery=delivery; this.outbox=outbox; this.notifications=notifications;
         this.push=push; this.keys=keys; this.mapper=mapper; this.min=min; this.max=max;
@@ -74,30 +78,30 @@ public class LuckyMoneyService {
         if(body.amount()<min || body.amount()>max) throw bad("AMOUNT_OUT_OF_RANGE","Số tiền ngoài hạn mức: " + min + "–" + max + " ₫");
         if(!Set.of("PROSPERITY","PEACE","JOY").contains(body.template()) || greeting.isBlank())
             throw bad("INVALID_ENVELOPE","Mẫu phong bao hoặc lời chúc không hợp lệ");
-        requireEmail(user);
+        smart.requireActiveDevice(user);
         var sender=wallets.findByUserId(user).orElseThrow(()->bad("WALLET_NOT_FOUND","Không tìm thấy ví"));
         var receiver=wallets.findByWalletCode(code).orElseThrow(()->bad("RECIPIENT_NOT_FOUND","Không tìm thấy ví nhận"));
         if(sender.id.equals(receiver.id)) throw bad("SELF_TRANSFER","Không thể gửi lì xì cho chính mình");
         active(sender); active(receiver);
         if(sender.availableBalance<body.amount()) throw bad("INSUFFICIENT_BALANCE","Số dư không đủ");
         var t=LedgerTransaction.create("LUCKY_MONEY",body.amount());
-        t.status="OTP_REQUIRED"; t.senderWalletId=sender.id; t.receiverWalletId=receiver.id;
+        t.status="AUTH_REQUIRED"; t.senderWalletId=sender.id; t.receiverWalletId=receiver.id;
         t.description=greeting; txs.save(t);
         var e=new LuckyMoneyEnvelope();
         e.id=t.id; e.senderUserId=user; e.receiverUserId=receiver.userId; e.idempotencyKey=key;
         e.recipientWalletCode=code; e.template=body.template(); e.greeting=greeting; e.createdAt=t.createdAt;
-        issue(e); envelopes.save(e);
+        e.otpExpiresAt=smart.issue(user,t); envelopes.save(e);
         return view(user,e,t);
     }
 
-    @Transactional(noRollbackFor=OtpAttemptException.class)
-    public View confirm(UUID user, UUID id, String code) {
+    @Transactional(noRollbackFor=SmartOtpBadSignatureException.class)
+    public View confirm(UUID user, UUID id, UUID deviceId, String signature, String smartOtpCode) {
         var t=locked(id); var e=envelope(id); sender(user,e);
         if(Set.of("WAITING_OPEN","COMPLETED","EXPIRED").contains(t.status)) return view(user,e,t);
         awaitingOtp(t);
         var pair=lockedWallets(t); var sw=pair[0]; var rw=pair[1]; active(sw); active(rw);
         if(sw.availableBalance<t.amount) throw bad("INSUFFICIENT_BALANCE","Số dư không đủ");
-        otp.verifyLocked(challenges.lockById(e.otpChallengeId).orElseThrow(),"LUCKY_MONEY",id,code);
+        smart.verifyAndConsume(user,t,deviceId,signature,smartOtpCode);
         sw.availableBalance-=t.amount; sw.heldBalance+=t.amount; sw.updatedAt=Instant.now(); wallets.save(sw);
         e.expiresAt=Instant.now().plus(Duration.ofHours(24)); envelopes.save(e);
         t.status="WAITING_OPEN"; t.updatedAt=Instant.now(); txs.save(t);
@@ -111,10 +115,8 @@ public class LuckyMoneyService {
     @Transactional
     public View resend(UUID user, UUID id) {
         var t=locked(id); var e=envelope(id); sender(user,e); awaitingOtp(t);
-        var old=challenges.lockById(e.otpChallengeId).orElseThrow();
-        if(old.resendAvailableAt.isAfter(Instant.now()))
-            throw new BusinessException("OTP_RESEND_TOO_SOON","Vui lòng chờ trước khi gửi lại OTP",HttpStatus.TOO_MANY_REQUESTS);
-        old.consumedAt=Instant.now(); challenges.save(old); issue(e); envelopes.save(e);
+        e.otpExpiresAt=smart.renew(user,t);
+        envelopes.save(e);
         return view(user,e,t);
     }
 
@@ -167,18 +169,6 @@ public class LuckyMoneyService {
         return true;
     }
 
-    private void issue(LuckyMoneyEnvelope e) {
-        String email=requireEmail(e.senderUserId);
-        var issued=otp.issue(e.senderUserId,"LUCKY_MONEY",e.id);
-        e.otpChallengeId=issued.challenge().id; e.otpExpiresAt=issued.challenge().expiresAt;
-        delivery.stage(e.otpChallengeId,issued.plaintextCode());
-        outbox.add("LUCKY_MONEY",e.id,"SEND_OTP_EMAIL",mapper.writeValueAsString(
-                Map.of("challengeId",e.otpChallengeId.toString(),"email",email,"purpose","LUCKY_MONEY")));
-    }
-    private String requireEmail(UUID user) {
-        return users.findById(user).filter(u->u.email!=null && !u.email.isBlank()).map(u->u.email)
-                .orElseThrow(()->bad("EMAIL_OTP_REQUIRED","Cần email để nhận OTP gửi lì xì"));
-    }
     private Wallet[] lockedWallets(LedgerTransaction t) {
         UUID first=t.senderWalletId.compareTo(t.receiverWalletId)<0?t.senderWalletId:t.receiverWalletId;
         UUID second=first.equals(t.senderWalletId)?t.receiverWalletId:t.senderWalletId;
@@ -193,9 +183,9 @@ public class LuckyMoneyService {
     private LuckyMoneyEnvelope envelope(UUID id) { return envelopes.findById(id).orElseThrow(()->bad("ENVELOPE_NOT_FOUND","Không tìm thấy phong bao")); }
     private void sender(UUID user, LuckyMoneyEnvelope e) { if(!user.equals(e.senderUserId)) throw forbidden(); }
     private void participant(UUID user, LuckyMoneyEnvelope e, LedgerTransaction t) {
-        if(!user.equals(e.senderUserId) && (!user.equals(e.receiverUserId) || "OTP_REQUIRED".equals(t.status))) throw forbidden();
+        if(!user.equals(e.senderUserId) && (!user.equals(e.receiverUserId) || "AUTH_REQUIRED".equals(t.status))) throw forbidden();
     }
-    private void awaitingOtp(LedgerTransaction t) { if(!"OTP_REQUIRED".equals(t.status)) throw bad("ENVELOPE_STATE_INVALID","Phong bao không còn chờ OTP"); }
+    private void awaitingOtp(LedgerTransaction t) { if(!"AUTH_REQUIRED".equals(t.status)) throw bad("ENVELOPE_STATE_INVALID","Phong bao không còn chờ Smart OTP"); }
     private void active(Wallet w) { if(!"ACTIVE".equals(w.status)) throw bad("WALLET_UNAVAILABLE","Ví không khả dụng"); }
     private View view(UUID user, LuckyMoneyEnvelope e, LedgerTransaction t) {
         boolean isSender=user.equals(e.senderUserId);

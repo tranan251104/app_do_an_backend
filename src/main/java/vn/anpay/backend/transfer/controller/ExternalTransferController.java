@@ -38,7 +38,7 @@ public class ExternalTransferController {
             @PathVariable UUID id,
             @Valid @RequestBody ConfirmTransferRequest request
     ) {
-        return ApiResponse.ok(service.confirm(SecurityUtil.userId(), id, request.otp()));
+        return ApiResponse.ok(service.confirm(SecurityUtil.userId(), id, request.deviceId(),request.signature(),request.smartOtpCode()));
     }
 
     @GetMapping("/{id}")
