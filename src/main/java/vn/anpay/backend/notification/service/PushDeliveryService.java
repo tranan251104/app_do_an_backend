@@ -67,16 +67,10 @@ public class PushDeliveryService {
         if (activeDevices.isEmpty()) {
             throw new IllegalStateException("No registered FCM device for transfer OTP demo");
         }
-        // Smart OTP enrollment verification is not a transfer OTP.
         String title;
         String body;
         Map<String, String> data;
-        if ("SMART_OTP_ACTIVATE".equals(purpose)) {
-            title = "AnPay - OTP kích hoạt Smart OTP";
-            body = "Mã xác thực kích hoạt Smart OTP: " + otp + ". Hiệu lực 5 phút.";
-            // For enrollment this identifier is the pending Smart OTP device ID.
-            data = Map.of("type", "SMART_OTP_ACTIVATE", "deviceId", transactionId);
-        } else if ("WITHDRAWAL".equals(purpose)) {
+        if ("WITHDRAWAL".equals(purpose)) {
             title = "AnPay - OTP rút tiền (DEMO)";
             body = "Mã xác nhận giao dịch: " + otp + ". Hiệu lực 5 phút.";
             data = Map.of("type", "WITHDRAWAL_OTP_DEMO", "transactionId", transactionId);

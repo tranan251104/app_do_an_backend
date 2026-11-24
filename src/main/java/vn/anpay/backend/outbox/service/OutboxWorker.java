@@ -120,6 +120,11 @@ public class OutboxWorker {
 
     private void sendDemoTransferOtp(String payload) throws Exception {
         JsonNode node = mapper.readTree(payload);
+        String purpose = node.path("purpose").asText("TRANSFER");
+        // Existing enrollment events may still be queued when the signed flow is deployed.
+        if ("SMART_OTP_ACTIVATE".equals(purpose)) {
+            return;
+        }
         UUID challengeId = UUID.fromString(requiredText(node, "challengeId"));
         UUID userId = UUID.fromString(requiredText(node, "userId"));
         String txId = requiredText(node, "transactionId");
@@ -127,7 +132,7 @@ public class OutboxWorker {
         if (code == null || code.isBlank()) {
             throw new IllegalStateException("OTP delivery code no longer available");
         }
-        pushDelivery.sendDemoTransferOtpToUser(userId, code, txId, node.path("purpose").asText("TRANSFER"));
+        pushDelivery.sendDemoTransferOtpToUser(userId, code, txId, purpose);
         // Cleanup only after outbox commit, same semantics as the mail sender.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
